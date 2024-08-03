@@ -1,0 +1,17 @@
+[profile.release]
+# do not perform backtrace for panic on release builds.
+panic = "abort"
+# perform optimizations on all codegen units.
+codegen-units = 1
+# "s" for normal optimize or "z" to optimize "aggressively" for size.
+opt-level = "z"
+# enable link time optimization.
+lto = "fat"
+# Incremental compilation causes rustc to save additional information to disk which will be reused when recompiling
+# the crate, improving re-compile times. The additional information is stored in the target directory.
+incremental = false
+# Includes debug information in release builds. Necessary for profiling. Does not
+# slow down the executable.
+debug = false
+# Remove debug symbols.
+strip = true
