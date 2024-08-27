@@ -1,5 +1,5 @@
 {
-  "frequency": 60,
+  "frequency": 2,
   "dns_resolvers": {
     "ident.me": {
       "enabled": true

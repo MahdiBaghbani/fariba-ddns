@@ -1,10 +1,12 @@
 use std::collections::HashMap;
 
-use reqwest::{Client, Response, StatusCode};
 use reqwest::header::{self, HeaderMap, HeaderValue};
+use reqwest::{Client, Response, StatusCode};
 use strfmt::strfmt;
 
-use crate::models::api::arvancloud::{
+pub mod models;
+
+use crate::providers::arvancloud::models::{
     ArvanDNSData, ArvanDNSRecord, ArvanIPFilterMode, ArvanIPv4Record,
 };
 

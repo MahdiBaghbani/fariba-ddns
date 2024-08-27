@@ -1,0 +1,17 @@
+[log]
+level = "debug"
+
+[update]
+unit = "seconds"
+interval = 60
+
+[resolver]
+id = "identme"
+
+[cloudflare]
+enabled = true
+zone_id = "your_zone_id_here"
+subdomain = "replace_with_your_subdomain"
+api_token = "api_token_here"
+api_key = "api_key_here"
+account_email = "your_email_here"
