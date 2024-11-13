@@ -1,23 +1,27 @@
-use serde_derive::Deserialize;
+use std::path::PathBuf;
+use std::sync::Arc;
 
-#[derive(Debug, Deserialize)]
+use serde::Deserialize;
+use tokio::sync::RwLock;
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct Settings {
     pub log: Log,
     pub update: Update,
     pub cloudflare: Vec<Cloudflare>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct Log {
     pub level: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct Update {
     pub interval: u64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct Cloudflare {
     pub enabled: bool,
     pub name: String,
@@ -26,7 +30,13 @@ pub struct Cloudflare {
     pub subdomains: Vec<CloudflareSubDomain>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct CloudflareSubDomain {
     pub name: String,
+}
+
+/// Manages the application settings, allowing for loading and reloading configurations.
+pub struct ConfigManager {
+    pub settings: Arc<RwLock<Settings>>,
+    pub config_path: PathBuf,
 }
