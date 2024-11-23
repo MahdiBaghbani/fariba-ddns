@@ -1,17 +1,21 @@
 [log]
-level = "debug"
+# Level can be "error", "warn", "info", "debug", or "trace"
+level = "trace"
 
+# Update interval in seconds
 [update]
-unit = "seconds"
-interval = 60
+interval = 300
 
-[resolver]
-id = "identme"
-
-[cloudflare]
+# Cloudflare configurations
+[[cloudflare]]
 enabled = true
+name = "example.com"
 zone_id = "your_zone_id_here"
-subdomain = "replace_with_your_subdomain"
-api_token = "api_token_here"
-api_key = "api_key_here"
-account_email = "your_email_here"
+api_token = "your_api_token_here"
+
+# List of subdomains to update
+[[cloudflare.subdomains]]
+name = "www"
+
+[[cloudflare.subdomains]]
+name = "api"
