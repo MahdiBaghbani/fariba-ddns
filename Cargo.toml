@@ -1,3 +1,8 @@
+cargo-features = [
+    "profile-rustflags",
+    "trim-paths"
+]
+
 [package]
 name = "fariba-ddns"
 version = "0.1.0"
@@ -6,12 +11,13 @@ edition = "2021"
 [dependencies]
 dotenvy = "0.15.7"
 dirs = "5.0.1"
-once_cell = "1.20.2"
-public-ip = "0.2.2"
-strfmt = "0.2.4"
-tracing = "0.1.40"
+futures = "0.3.31"
 log = "0.4.22"
-futures = "0.3.30"
+public-ip = "0.2.2"
+serde_json = "1.0.133"
+strfmt = "0.2.4"
+thiserror = "2.0.3"
+tracing = "0.1.40"
 
 [dependencies.config]
 version = "0.14.1"
@@ -43,4 +49,31 @@ features = [
 version = "0.3.18"
 features = [
     "env-filter",
+]
+
+[profile.release]
+# do not perform backtrace for panic on release builds.
+panic = "abort"
+# perform optimizations on all codegen units.
+codegen-units = 1
+# "s" for normal optimize or "z" to optimize "aggressively" for size.
+opt-level = "z"
+# enable link time optimization.
+lto = "fat"
+# Incremental compilation causes rustc to save additional information
+# to disk which will be reused when recompiling the crate, improving
+# re-compile times. The additional information is stored in the target
+# directory.
+incremental = false
+# Includes debug information in release builds.
+# Necessary for profiling. Does not slow down the executable.
+debug = false
+# Remove debug symbols.
+strip = true
+# Removes potentially privileged information from your binaries.
+trim-paths = "all"
+# Better compile performance.
+rustflags = [
+    "-Cdebuginfo=0",
+    "-Zthreads=8",
 ]
