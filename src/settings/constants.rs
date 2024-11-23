@@ -16,10 +16,10 @@ name = "example.com"
 zone_id = "your_zone_id_here"
 api_token = "your_api_token_here"
 
-  # List of subdomains to update
-  [[cloudflare.subdomains]]
-  name = "www"
+# List of subdomains to update
+[[cloudflare.subdomains]]
+name = "www"
 
-  [[cloudflare.subdomains]]
-  name = "api"
+[[cloudflare.subdomains]]
+name = "api"
 "#;

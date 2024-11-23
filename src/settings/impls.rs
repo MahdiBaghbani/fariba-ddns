@@ -1,17 +1,37 @@
+// Standard library
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::{env, fs};
 
-use config::{Config, ConfigError, Environment, File};
+// 3rd party crates
+use config::{Config, ConfigError, File};
 use log::{error, info, LevelFilter};
 use tokio::sync::RwLock;
 
+// Project imports
+use crate::providers::cloudflare::structs::CfConfig;
+
+// Current module imports
 use super::constants::DEFAULT_CONFIG;
-use super::models::{ConfigManager, Settings};
+use super::structs::{ConfigManager, Settings};
+
+impl Settings {
+    pub fn get_log_level(&self) -> String {
+        self.log.level.to_lowercase()
+    }
+
+    pub fn get_update_interval(&self) -> u64 {
+        self.update.interval
+    }
+
+    pub fn get_cloudflares(&self) -> Vec<CfConfig> {
+        self.cloudflare.clone()
+    }
+}
 
 impl ConfigManager {
     /// Creates a new `ConfigManager` instance by loading the configuration.
-    pub fn new() -> Result<Self, ConfigError> {
+    pub async fn new() -> Result<Self, ConfigError> {
         let config_path: PathBuf = Self::get_config_path()?;
         Self::ensure_config_file_exists(&config_path)?;
 
@@ -19,10 +39,10 @@ impl ConfigManager {
 
         let manager = ConfigManager {
             settings: Arc::new(RwLock::new(settings)),
-            config_path,
+            _config_path: config_path,
         };
 
-        manager.adjust_logging_level();
+        manager.adjust_logging_level().await;
 
         Ok(manager)
     }
@@ -70,18 +90,17 @@ impl ConfigManager {
 
         let settings: Config = Config::builder()
             .add_source(File::with_name(config_file))
-            .add_source(Environment::with_prefix("FDDNS").separator("__"))
             .build()?;
 
         settings.try_deserialize()
     }
 
     /// Reloads the configuration from the file.
-    pub async fn reload(&self) -> Result<(), ConfigError> {
-        let new_settings: Settings = Self::load_settings(&self.config_path)?;
+    pub async fn _reload(&self) -> Result<(), ConfigError> {
+        let new_settings: Settings = Self::load_settings(&self._config_path)?;
         *self.settings.write().await = new_settings;
         self.adjust_logging_level().await;
-        info!("Configuration reloaded from {:?}", self.config_path);
+        info!("Configuration reloaded from {:?}", self._config_path);
         Ok(())
     }
 
@@ -105,15 +124,15 @@ impl ConfigManager {
     }
 
     /// Provides an `Arc` to the settings `RwLock`.
-    pub fn get_settings_arc(&self) -> Arc<RwLock<Settings>> {
+    pub fn _get_settings_arc(&self) -> Arc<RwLock<Settings>> {
         Arc::clone(&self.settings)
     }
 
     pub async fn get_log_level(&self) -> String {
-        self.settings.read().await.log.level.to_lowercase()
+        self.settings.read().await.get_log_level()
     }
 
     pub async fn get_update_interval(&self) -> u64 {
-        self.settings.read().await.update.interval
+        self.settings.read().await.get_update_interval()
     }
 }
