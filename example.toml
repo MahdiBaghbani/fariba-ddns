@@ -16,6 +16,3 @@ api_token = "your_api_token_here"
 # List of subdomains to update
 [[cloudflare.subdomains]]
 name = "www"
-
-[[cloudflare.subdomains]]
-name = "api"
