@@ -1,5 +1,5 @@
 # Stage 1: Build stage
-FROM rustlang/rust:nightly-bookworm@sha256:330f1c29dd9d2cfcfab2d59bd5d94a3b2af53da8a8e9a9d296cd249da0a4bacf AS builder
+FROM rustlang/rust:nightly-bookworm@sha256:d1546a17a1ae256b5d2a82e2296ac6333a979267e69948ab2c1acea9109e883a AS builder
 
 # Install dependencies
 RUN apt-get -qq update && \
