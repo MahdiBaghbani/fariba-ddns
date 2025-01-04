@@ -1,0 +1,14 @@
+services:
+  fariba-ddns:
+    image: "fariba-ddns"
+    build:
+      context: .
+      dockerfile: docker/base.Dockerfile
+    container_name: "fariba-ddns"
+    restart: "unless-stopped"
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      FDDNS_CONFIG_PATH: /settings.toml
+    volumes:
+      - "./.settings.toml:/settings.toml"

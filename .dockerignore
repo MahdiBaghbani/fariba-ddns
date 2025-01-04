@@ -1,0 +1,14 @@
+docker
+target
+
+env.example
+example.toml
+rust-toolchain
+
+.dockerignore
+.forgejo
+.git
+.github
+.gitignore
+.idea
+.settings.toml

@@ -1,50 +1,99 @@
+// Standard library
+use std::error::Error;
+use std::net::Ipv4Addr;
+use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::time::Interval;
-use tokio::{task, time};
+// 3rd party crates
+use tokio::sync::RwLockReadGuard;
+use tracing::{debug, error, info, warn};
+use tracing_subscriber::{filter::LevelFilter, EnvFilter};
 
-use models::config::Config;
-use providers::arvancloud::arvan_update_dns;
-use config::config::read_config;
-
-mod models;
+// Project modules
 mod providers;
-mod config;
+mod settings;
+
+// Project imports
+use crate::providers::cloudflare::errors::CloudflareError;
+use crate::providers::cloudflare::functions::{get_cloudflares, process_updates};
+use crate::providers::cloudflare::structs::Cloudflare;
+use crate::settings::structs::{ConfigManager, Settings};
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let forever = task::spawn(async {
-        // Read the JSON contents of the file as an instance of `User`.
-        let config: Config = read_config().await.expect("failed to read config");
-        let mut interval: Interval = time::interval(Duration::from_secs(config.frequency));
+async fn main() {
+    // loads the .env file from the current directory or parents.
+    dotenvy::dotenv_override().ok();
 
-        loop {
-            interval.tick().await;
-            do_something().await.expect("TODO: panic message");
-        }
-    });
+    // Create ConfigManager and wrap it in Arc
+    let config: Arc<ConfigManager> = Arc::new(
+        ConfigManager::new()
+            .await
+            .expect("Failed to initialize configuration"),
+    );
 
-    forever.await.expect("TODO: panic message");
+    // setup logging.
+    let log_level: String = config.get_log_level().await;
 
-    Ok(())
+    let filter: EnvFilter = EnvFilter::builder()
+        .with_default_directive(LevelFilter::ERROR.into())
+        .parse_lossy(log_level)
+        .add_directive("hyper_util=error".parse().unwrap())
+        .add_directive("reqwest=error".parse().unwrap())
+        .add_directive("trust_dns_proto=error".parse().unwrap())
+        .add_directive("hyper_system_resolver=error".parse().unwrap())
+        .add_directive("hyper=error".parse().unwrap());
+
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_level(true)
+        .init();
+
+    info!("⚙️ Settings have been loaded.");
+
+    // Run the main application logic
+    run(config).await.expect("Failed to run the application");
 }
 
-async fn do_something() -> Result<(), Box<dyn std::error::Error>> {
-    let ipv4_finder: &str = "https://ident.me";
+async fn run(config: Arc<ConfigManager>) -> Result<(), Box<dyn Error>> {
+    let update_interval: u64 = config.get_update_interval().await;
 
-    let ipv4_address: Option<String> = reqwest::get(ipv4_finder).await?.text().await.ok();
+    info!(
+        "🕰️ Updating IPv4 (A) records every {} seconds",
+        update_interval
+    );
 
-    if let Some(ipv4_address) = ipv4_address {
-        let arvan_api_secret: &str = "Apikey f3d8d8ef-bb3a-5b3f-bed2-2f175c4528cb";
-        arvan_update_dns(
-            &*ipv4_address,
-            "azadehafzar.ir",
-            "fariba-ddns",
-            arvan_api_secret,
-        )
-        .await
-        .expect("TODO: panic message");
+    // Fetch settings and create Cloudflare instances
+    let cloudflares: Vec<Cloudflare> = get_cloudflares(config).await?;
+
+    let mut previous_ip: Option<Ipv4Addr> = None;
+
+    loop {
+        // Get the public IPv4 address
+        match get_public_ip_v4().await {
+            Some(ip) => {
+                if Some(ip) != previous_ip {
+                    info!("Public 🧩 IPv4 detected: {}", ip);
+                    previous_ip = Some(ip);
+
+                    // Process updates
+                    if let Err(e) = process_updates(&cloudflares, &ip).await {
+                        error!("Error updating  records: {}", e);
+                    }
+                } else {
+                    debug!("🧩 IPv4 address unchanged");
+                }
+            }
+            None => {
+                warn!("🧩 IPv4 not detected");
+            }
+        }
+
+        // Sleep for the update interval duration
+        tokio::time::sleep(Duration::from_secs(update_interval)).await;
     }
+}
 
-    Ok(())
+async fn get_public_ip_v4() -> Option<Ipv4Addr> {
+    // attempt to get an IP address.
+    public_ip::addr_v4().await
 }
