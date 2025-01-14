@@ -1,20 +1,14 @@
 // Standard library
 use std::sync::Arc;
+use std::time::Duration;
 
 // 3rd party crates
 use async_trait::async_trait;
 use tokio::sync::Semaphore;
-use tokio::time::{Duration, Instant};
+use tokio::time::Instant;
 
-// Project modules
-use super::traits::{RateLimitConfig, RateLimiter};
-
-/// A token bucket rate limiter implementation
-pub struct TokenBucketRateLimiter {
-    semaphore: Arc<Semaphore>,
-    window: Duration,
-    last_refill: tokio::sync::Mutex<Instant>,
-}
+use super::traits::RateLimiter;
+use super::types::{RateLimitConfig, TokenBucketRateLimiter};
 
 impl TokenBucketRateLimiter {
     /// Create a new token bucket rate limiter

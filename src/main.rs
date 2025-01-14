@@ -12,6 +12,7 @@ use tracing_subscriber::{filter::LevelFilter, EnvFilter};
 // Project modules
 mod providers;
 mod settings;
+mod utility;
 
 // Project imports
 use crate::providers::cloudflare::errors::CloudflareError;
