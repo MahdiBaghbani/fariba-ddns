@@ -2,18 +2,22 @@
 use std::error::Error;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
-use tokio::sync::RwLockReadGuard;
-use tracing::{debug, error};
 
-// External crates
+// 3rd party crates
 use futures::{stream::FuturesUnordered, StreamExt};
 use reqwest::header::{HeaderMap, HeaderValue};
-use reqwest::{header, Client};
+use reqwest::{header, Client, StatusCode};
+use serde_json::json;
+use tokio::sync::RwLockReadGuard;
+use tracing::{debug, error, info};
 
 // Project modules
-use super::errors::CloudflareError;
-use super::types::{CfConfig, Cloudflare};
+use crate::providers::DnsProvider;
 use crate::settings::types::{ConfigManager, Settings};
+
+use super::constants::CLOUDFLARE_API_BASE;
+use super::errors::CloudflareError;
+use super::types::{CfConfig, Cloudflare, DnsResponse};
 
 /// Creates a reqwest client with the appropriate headers for Cloudflare API.
 ///
@@ -115,11 +119,116 @@ pub async fn get_cloudflares(
     let settings: RwLockReadGuard<Settings> = config.get_settings().await;
 
     // Convert the vector of `CloudflareConfig` into a vector of `Cloudflare`.
-    let configs_to_cloudflares: Result<Vec<Option<Cloudflare>>, CloudflareError> = settings
+    let cloudflares: Vec<Cloudflare> = settings
         .get_cloudflares()
         .into_iter()
-        .map(Cloudflare::new)
+        .filter_map(|config| match Cloudflare::new(config) {
+            Ok(cf) if cf.is_enabled() => Some(cf),
+            _ => None,
+        })
         .collect();
 
-    configs_to_cloudflares.map(|vec| vec.into_iter().flatten().collect())
+    Ok(cloudflares)
+}
+
+/// Updates DNS records for all configured subdomains.
+pub(super) async fn update_dns_records(
+    cloudflare: &Cloudflare,
+    ip: &Ipv4Addr,
+) -> Result<(), CloudflareError> {
+    for subdomain in &cloudflare.config.subdomains {
+        let records = fetch_dns_records(cloudflare, &subdomain.name).await?;
+
+        for record in records.result {
+            if record.content != ip.to_string() {
+                update_record(cloudflare, &record.id, ip).await?;
+                info!(
+                    zone = %cloudflare.config.name,
+                    subdomain = %subdomain.name,
+                    "Updated DNS record to {}",
+                    ip
+                );
+            } else {
+                debug!(
+                    zone = %cloudflare.config.name,
+                    subdomain = %subdomain.name,
+                    "DNS record already set to {}",
+                    ip
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Fetches DNS records for a specific subdomain.
+async fn fetch_dns_records(
+    cloudflare: &Cloudflare,
+    subdomain: &str,
+) -> Result<DnsResponse, CloudflareError> {
+    let url = format!(
+        "{}/zones/{}/dns_records?type=A&name={}",
+        CLOUDFLARE_API_BASE, cloudflare.config.zone_id, subdomain
+    );
+
+    let response =
+        cloudflare
+            .client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| CloudflareError::FetchFailed {
+                zone: cloudflare.config.name.clone(),
+                message: e.to_string(),
+            })?;
+
+    if !response.status().is_success() {
+        return Err(CloudflareError::FetchFailed {
+            zone: cloudflare.config.name.clone(),
+            message: format!("HTTP {}", response.status()),
+        });
+    }
+
+    response
+        .json::<DnsResponse>()
+        .await
+        .map_err(|e| CloudflareError::FetchFailed {
+            zone: cloudflare.config.name.clone(),
+            message: e.to_string(),
+        })
+}
+
+/// Updates a specific DNS record with a new IP address.
+async fn update_record(
+    cloudflare: &Cloudflare,
+    record_id: &str,
+    ip: &Ipv4Addr,
+) -> Result<(), CloudflareError> {
+    let url = format!(
+        "{}/zones/{}/dns_records/{}",
+        CLOUDFLARE_API_BASE, cloudflare.config.zone_id, record_id
+    );
+
+    let response = cloudflare
+        .client
+        .patch(&url)
+        .json(&json!({
+            "content": ip.to_string(),
+            "proxied": true
+        }))
+        .send()
+        .await
+        .map_err(|e| CloudflareError::UpdateFailed {
+            zone: cloudflare.config.name.clone(),
+            message: e.to_string(),
+        })?;
+
+    if !response.status().is_success() {
+        return Err(CloudflareError::UpdateFailed {
+            zone: cloudflare.config.name.clone(),
+            message: format!("HTTP {}", response.status()),
+        });
+    }
+
+    Ok(())
 }
