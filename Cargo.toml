@@ -10,17 +10,17 @@ edition = "2021"
 
 [dependencies]
 dotenvy = "0.15.7"
-dirs = "5.0.1"
+dirs = "6.0.0"
 futures = "0.3.31"
-log = "0.4.22"
+log = "0.4.25"
 public-ip = "0.2.2"
-serde_json = "1.0.134"
+serde_json = "1.0.135"
 strfmt = "0.2.4"
-thiserror = "2.0.9"
+thiserror = "2.0.11"
 tracing = "0.1.41"
 
 [dependencies.config]
-version = "0.15.4"
+version = "0.15.5"
 features = [
     "toml",
 ]
@@ -39,7 +39,7 @@ features = [
 ]
 
 [dependencies.tokio]
-version = "1.42.0"
+version = "1.43.0"
 features = [
     "rt-multi-thread",
     "macros",
