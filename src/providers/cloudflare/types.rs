@@ -67,8 +67,10 @@ fn default_rate_limit_config() -> RateLimitConfig {
 }
 
 /// Represents a subdomain configuration in Cloudflare.
+/// An empty name represents the root domain.
 #[derive(Debug, Deserialize, Clone)]
 pub struct CfSubDomain {
+    #[serde(default)]
     pub name: String,
 }
 

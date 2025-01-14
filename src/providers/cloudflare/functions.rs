@@ -87,8 +87,6 @@ pub async fn update_dns_records(
             .with_rate_limit(fetch_dns_records(cloudflare, &subdomain.name))
             .await?;
 
-        println!("DNS records: {:?}", records);
-
         for record in records.result {
             if record.content != ip.to_string() {
                 info!(
@@ -180,9 +178,24 @@ async fn fetch_dns_records(
     cloudflare: &Cloudflare,
     subdomain: &str,
 ) -> Result<DnsResponse, CloudflareError> {
+    // Construct the full domain name
+    let full_domain = if subdomain.is_empty() {
+        // Root domain case
+        cloudflare.config.name.clone()
+    } else {
+        // Subdomain case
+        format!("{}.{}", subdomain, cloudflare.config.name)
+    };
+
+    info!(
+        zone = %cloudflare.config.name,
+        domain = %full_domain,
+        "Fetching DNS records"
+    );
+
     let url = format!(
         "{}/zones/{}/dns_records?type=A&name={}",
-        CLOUDFLARE_API_BASE, cloudflare.config.zone_id, subdomain
+        CLOUDFLARE_API_BASE, cloudflare.config.zone_id, full_domain
     );
 
     let response =
