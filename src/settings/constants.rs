@@ -1,4 +1,4 @@
-/// The default configuration file content with comments to guide the user.
+/// Example configuration
 pub const DEFAULT_CONFIG: &str = r#"
 # Logging configuration
 [log]
@@ -9,17 +9,19 @@ level = "trace"
 [update]
 interval = 300
 
-# Cloudflare configurations
+# Cloudflare provider configuration
 [[cloudflare]]
 enabled = true
-name = "example.com"
-zone_id = "your_zone_id_here"
-api_token = "your_api_token_here"
+name = "example"
+zone_id = "your_zone_id"
+api_token = "your_api_token"
 
-# List of subdomains to update
-[[cloudflare.subdomains]]
-name = "www"
+# Rate limiting configuration (optional)
+rate_limit = { max_requests = 30, window_secs = 60 }
 
-[[cloudflare.subdomains]]
-name = "api"
+# Subdomains to update
+subdomains = [
+    { name = "example.com" },
+    { name = "subdomain.example.com" }
+]
 "#;

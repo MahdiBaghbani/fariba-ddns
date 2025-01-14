@@ -24,4 +24,13 @@ pub enum CloudflareError {
 
     #[error("Failed to fetch DNS records for zone '{zone}': {message}")]
     FetchFailed { zone: String, message: String },
+
+    #[error("Rate limit exceeded for zone '{0}'")]
+    RateLimited(String),
+
+    #[error("Invalid rate limit configuration for zone '{zone}': {reason}")]
+    InvalidRateLimit { zone: String, reason: String },
+
+    #[error("Invalid subdomain '{subdomain}' for zone '{zone}'")]
+    InvalidSubdomain { zone: String, subdomain: String },
 }

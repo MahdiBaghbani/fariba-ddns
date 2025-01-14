@@ -38,21 +38,3 @@ pub trait DnsProvider: Send + Sync {
     /// Get the provider name
     fn get_name(&self) -> &str;
 }
-
-/// Rate limiting configuration for DNS providers
-#[derive(Debug, Clone, Deserialize)]
-pub struct RateLimitConfig {
-    /// Maximum number of requests per time window
-    pub max_requests: u32,
-    /// Time window in seconds
-    pub window_secs: u64,
-}
-
-/// Rate limiter trait for implementing different rate limiting strategies
-#[async_trait]
-pub trait RateLimiter: Send + Sync {
-    /// Acquire permission to make a request
-    async fn acquire(&self) -> bool;
-    /// Release a request slot
-    async fn release(&self);
-}

@@ -24,7 +24,7 @@ use super::types::{CfConfig, Cloudflare, DnsResponse};
 /// # Errors
 ///
 /// Returns an error if the API token is invalid or if the client cannot be built.
-pub(super) fn create_reqwest_client(cloudflare: &CfConfig) -> Result<Client, CloudflareError> {
+pub fn create_reqwest_client(cloudflare: &CfConfig) -> Result<Client, CloudflareError> {
     if cloudflare.api_token.is_empty() || cloudflare.api_token == "your_api_token_here" {
         error!(
             zone = %cloudflare.name,
@@ -132,16 +132,20 @@ pub async fn get_cloudflares(
 }
 
 /// Updates DNS records for all configured subdomains.
-pub(super) async fn update_dns_records(
+pub async fn update_dns_records(
     cloudflare: &Cloudflare,
     ip: &Ipv4Addr,
 ) -> Result<(), CloudflareError> {
     for subdomain in &cloudflare.config.subdomains {
-        let records = fetch_dns_records(cloudflare, &subdomain.name).await?;
+        let records = cloudflare
+            .with_rate_limit(fetch_dns_records(cloudflare, &subdomain.name))
+            .await?;
 
         for record in records.result {
             if record.content != ip.to_string() {
-                update_record(cloudflare, &record.id, ip).await?;
+                cloudflare
+                    .with_rate_limit(update_record(cloudflare, &record.id, ip))
+                    .await?;
                 info!(
                     zone = %cloudflare.config.name,
                     subdomain = %subdomain.name,
