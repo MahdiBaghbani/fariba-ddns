@@ -1,5 +1,5 @@
 // Standard library
-use std::net::Ipv4Addr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 // 3rd party crates
 use async_trait::async_trait;
@@ -26,8 +26,19 @@ pub trait DnsProvider: Send + Sync {
     where
         Self: Sized;
 
-    /// Update DNS records for all configured subdomains
+    /// Update DNS records for all configured subdomains with IPv4
     async fn update_dns_records(&self, ip: &Ipv4Addr) -> Result<(), Self::Error>;
+
+    /// Update DNS records for all configured subdomains with IPv6
+    async fn update_dns_records_v6(&self, ip: &Ipv6Addr) -> Result<(), Self::Error>;
+
+    /// Update DNS records for all configured subdomains with either IPv4 or IPv6
+    async fn update_dns_records_ip(&self, ip: &IpAddr) -> Result<(), Self::Error> {
+        match ip {
+            IpAddr::V4(ipv4) => self.update_dns_records(ipv4).await,
+            IpAddr::V6(ipv6) => self.update_dns_records_v6(ipv6).await,
+        }
+    }
 
     /// Validate the provider's configuration
     fn validate_config(&self) -> Result<(), Self::Error>;

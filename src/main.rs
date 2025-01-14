@@ -10,14 +10,17 @@ use tracing::{debug, error, info, warn};
 use tracing_subscriber::{filter::LevelFilter, EnvFilter};
 
 // Project modules
+mod metrics;
 mod providers;
 mod settings;
 mod utility;
 
 // Project imports
+use crate::metrics::{HealthChecker, MetricsManager};
 use crate::providers::cloudflare::errors::CloudflareError;
 use crate::providers::cloudflare::functions::{get_cloudflares, process_updates};
 use crate::providers::cloudflare::types::Cloudflare;
+use crate::providers::DnsProvider;
 use crate::settings::types::{ConfigManager, Settings};
 
 #[tokio::main]
@@ -31,6 +34,10 @@ async fn main() {
             .await
             .expect("Failed to initialize configuration"),
     );
+
+    // Create metrics and health checker
+    let metrics = Arc::new(MetricsManager::new());
+    let health = Arc::new(HealthChecker::new());
 
     // setup logging.
     let log_level: String = config.get_log_level().await;
@@ -52,33 +59,37 @@ async fn main() {
     info!("⚙️ Settings have been loaded.");
 
     // Run the main application logic
-    run(config).await.expect("Failed to run the application");
+    run(config, metrics, health)
+        .await
+        .expect("Failed to run the application");
 }
 
-async fn run(config: Arc<ConfigManager>) -> Result<(), Box<dyn Error>> {
+async fn run(
+    config: Arc<ConfigManager>,
+    metrics: Arc<MetricsManager>,
+    health: Arc<HealthChecker>,
+) -> Result<(), Box<dyn Error>> {
     let update_interval: u64 = config.get_update_interval().await;
 
-    info!(
-        "🕰️ Updating IPv4 (A) records every {} seconds",
-        update_interval
-    );
+    info!("🕰️ Updating DNS records every {} seconds", update_interval);
 
     // Fetch settings and create Cloudflare instances
     let cloudflares: Vec<Cloudflare> = get_cloudflares(config).await?;
 
-    let mut previous_ip: Option<Ipv4Addr> = None;
+    let mut previous_ipv4: Option<Ipv4Addr> = None;
+    let mut previous_ipv6: Option<std::net::Ipv6Addr> = None;
 
     loop {
         // Get the public IPv4 address
         match get_public_ip_v4().await {
             Some(ip) => {
-                if Some(ip) != previous_ip {
+                if Some(ip) != previous_ipv4 {
                     info!("Public 🧩 IPv4 detected: {}", ip);
-                    previous_ip = Some(ip);
+                    previous_ipv4 = Some(ip);
 
                     // Process updates
                     if let Err(e) = process_updates(&cloudflares, &ip).await {
-                        error!("Error updating  records: {}", e);
+                        error!("Error updating IPv4 records: {}", e);
                     }
                 } else {
                     debug!("🧩 IPv4 address unchanged");
@@ -86,6 +97,30 @@ async fn run(config: Arc<ConfigManager>) -> Result<(), Box<dyn Error>> {
             }
             None => {
                 warn!("🧩 IPv4 not detected");
+            }
+        }
+
+        // Get the public IPv6 address
+        match get_public_ip_v6().await {
+            Some(ip) => {
+                if Some(ip) != previous_ipv6 {
+                    info!("Public 🧩 IPv6 detected: {}", ip);
+                    previous_ipv6 = Some(ip);
+
+                    // Process updates
+                    for cloudflare in &cloudflares {
+                        if cloudflare.config.enable_ipv6 {
+                            if let Err(e) = cloudflare.update_dns_records_v6(&ip).await {
+                                error!("Error updating IPv6 records: {}", e);
+                            }
+                        }
+                    }
+                } else {
+                    debug!("🧩 IPv6 address unchanged");
+                }
+            }
+            None => {
+                debug!("🧩 IPv6 not detected");
             }
         }
 
@@ -97,4 +132,9 @@ async fn run(config: Arc<ConfigManager>) -> Result<(), Box<dyn Error>> {
 async fn get_public_ip_v4() -> Option<Ipv4Addr> {
     // attempt to get an IP address.
     public_ip::addr_v4().await
+}
+
+async fn get_public_ip_v6() -> Option<std::net::Ipv6Addr> {
+    // attempt to get an IP address.
+    public_ip::addr_v6().await
 }

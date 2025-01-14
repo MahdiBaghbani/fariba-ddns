@@ -1,7 +1,7 @@
-use std::fmt;
 // Standard library
+use std::fmt;
 use std::future::Future;
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
 
 // 3rd party crates
@@ -10,6 +10,7 @@ use reqwest::Client;
 use serde::Deserialize;
 
 // Project modules
+use crate::metrics::{HealthChecker, MetricsManager};
 use crate::providers::traits::DnsProvider;
 use crate::utility::rate_limiter::traits::RateLimiter;
 use crate::utility::rate_limiter::types::{RateLimitConfig, TokenBucketRateLimiter};
@@ -22,6 +23,8 @@ pub struct Cloudflare {
     pub config: CfConfig,
     pub client: Client,
     rate_limiter: Arc<dyn RateLimiter>,
+    metrics: Arc<MetricsManager>,
+    health: Arc<HealthChecker>,
 }
 
 // Manual Debug implementation for Cloudflare
@@ -31,6 +34,8 @@ impl fmt::Debug for Cloudflare {
             .field("config", &self.config)
             .field("client", &self.client)
             .field("rate_limiter", &"<rate limiter>")
+            .field("metrics", &self.metrics)
+            .field("health", &self.health)
             .finish()
     }
 }
@@ -42,6 +47,8 @@ impl Clone for Cloudflare {
             config: self.config.clone(),
             client: self.client.clone(),
             rate_limiter: Arc::clone(&self.rate_limiter),
+            metrics: Arc::clone(&self.metrics),
+            health: Arc::clone(&self.health),
         }
     }
 }
@@ -53,10 +60,11 @@ pub struct CfConfig {
     pub name: String,
     pub zone_id: String,
     pub api_token: String,
-    pub subdomains: Vec<CfSubDomain>,
-    /// Rate limiting configuration
+    #[serde(default)]
+    pub enable_ipv6: bool,
     #[serde(default = "default_rate_limit_config")]
     pub rate_limit: RateLimitConfig,
+    pub subdomains: Vec<CfSubDomain>,
 }
 
 fn default_rate_limit_config() -> RateLimitConfig {
@@ -85,6 +93,8 @@ pub struct DnsResponse {
 pub struct DnsResponseResult {
     pub id: String,
     pub content: String,
+    #[serde(default)]
+    pub r#type: String,
 }
 
 /// Represents the response from a zone request.
@@ -101,6 +111,24 @@ pub struct ZoneResponseResult {
 }
 
 impl Cloudflare {
+    /// Creates a new Cloudflare instance with metrics and health checking
+    pub fn new_with_monitoring(
+        config: CfConfig,
+        metrics: Arc<MetricsManager>,
+        health: Arc<HealthChecker>,
+    ) -> Result<Self, CloudflareError> {
+        let client = create_reqwest_client(&config)?;
+        let rate_limiter = Arc::new(TokenBucketRateLimiter::new(config.rate_limit.clone()));
+
+        Ok(Self {
+            config,
+            client,
+            rate_limiter,
+            metrics,
+            health,
+        })
+    }
+
     /// Acquires a rate limit permit before making an API call
     pub async fn with_rate_limit<F, T, E>(&self, f: F) -> Result<T, E>
     where
@@ -108,6 +136,7 @@ impl Cloudflare {
         E: From<CloudflareError>,
     {
         if !self.rate_limiter.acquire().await {
+            self.metrics.record_rate_limit().await;
             return Err(CloudflareError::RateLimited(self.config.name.clone()).into());
         }
 
@@ -123,19 +152,46 @@ impl DnsProvider for Cloudflare {
     type Error = CloudflareError;
 
     fn new(config: Self::Config) -> Result<Self, Self::Error> {
-        let client = create_reqwest_client(&config)?;
-        let rate_limiter = Arc::new(TokenBucketRateLimiter::new(config.rate_limit.clone()));
-
-        Ok(Self {
+        Self::new_with_monitoring(
             config,
-            client,
-            rate_limiter,
-        })
+            Arc::new(MetricsManager::new()),
+            Arc::new(HealthChecker::new()),
+        )
     }
 
     async fn update_dns_records(&self, ip: &Ipv4Addr) -> Result<(), Self::Error> {
         use super::functions::update_dns_records;
-        update_dns_records(self, ip).await
+        let result = update_dns_records(self, ip).await;
+        match &result {
+            Ok(_) => {
+                self.metrics.record_success(false, ip.to_string()).await;
+                self.health.record_success().await;
+            }
+            Err(e) => {
+                self.metrics.record_failure(false).await;
+                self.health.record_failure(e.to_string()).await;
+            }
+        }
+        result
+    }
+
+    async fn update_dns_records_v6(&self, ip: &Ipv6Addr) -> Result<(), Self::Error> {
+        if !self.config.enable_ipv6 {
+            return Ok(());
+        }
+        use super::functions::update_dns_records_v6;
+        let result = update_dns_records_v6(self, ip).await;
+        match &result {
+            Ok(_) => {
+                self.metrics.record_success(true, ip.to_string()).await;
+                self.health.record_success().await;
+            }
+            Err(e) => {
+                self.metrics.record_failure(true).await;
+                self.health.record_failure(e.to_string()).await;
+            }
+        }
+        result
     }
 
     fn validate_config(&self) -> Result<(), Self::Error> {
