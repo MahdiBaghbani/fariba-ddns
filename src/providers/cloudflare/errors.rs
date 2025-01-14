@@ -33,4 +33,7 @@ pub enum CloudflareError {
 
     #[error("Invalid subdomain '{subdomain}' for zone '{zone}'")]
     InvalidSubdomain { zone: String, subdomain: String },
+
+    #[error("Zone '{0}' is not active (status: {1})")]
+    InactiveZone(String, String),
 }
