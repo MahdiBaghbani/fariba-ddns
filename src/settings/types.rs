@@ -7,7 +7,7 @@ use serde::Deserialize;
 use tokio::sync::RwLock;
 
 // Project imports
-use crate::providers::cloudflare::structs::CfConfig;
+use crate::providers::cloudflare::types::CfConfig;
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct Log {

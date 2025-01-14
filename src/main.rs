@@ -16,8 +16,8 @@ mod settings;
 // Project imports
 use crate::providers::cloudflare::errors::CloudflareError;
 use crate::providers::cloudflare::functions::{get_cloudflares, process_updates};
-use crate::providers::cloudflare::structs::Cloudflare;
-use crate::settings::structs::{ConfigManager, Settings};
+use crate::providers::cloudflare::types::Cloudflare;
+use crate::settings::types::{ConfigManager, Settings};
 
 #[tokio::main]
 async fn main() {

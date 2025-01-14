@@ -11,10 +11,9 @@ use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest::{header, Client};
 
 // Project modules
-use crate::settings::structs::{ConfigManager, Settings};
-
 use super::errors::CloudflareError;
-use super::structs::{CfConfig, Cloudflare};
+use super::types::{CfConfig, Cloudflare};
+use crate::settings::types::{ConfigManager, Settings};
 
 /// Creates a reqwest client with the appropriate headers for Cloudflare API.
 ///
@@ -110,7 +109,9 @@ pub async fn process_updates(
     Ok(())
 }
 
-pub async fn get_cloudflares(config: Arc<ConfigManager>) -> Result<Vec<Cloudflare>, CloudflareError> {
+pub async fn get_cloudflares(
+    config: Arc<ConfigManager>,
+) -> Result<Vec<Cloudflare>, CloudflareError> {
     let settings: RwLockReadGuard<Settings> = config.get_settings().await;
 
     // Convert the vector of `CloudflareConfig` into a vector of `Cloudflare`.

@@ -10,7 +10,7 @@ use tracing::{debug, error, info, trace};
 // Current module imports
 use super::errors::CloudflareError;
 use super::functions::create_reqwest_client;
-use super::structs::{CfConfig, CfSubDomain, Cloudflare, DnsResponse, ZoneResponse};
+use super::types::{CfConfig, CfSubDomain, Cloudflare, DnsResponse, ZoneResponse};
 
 impl CfSubDomain {
     /// Updates the DNS record for the subdomain with the new IP address.

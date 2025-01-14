@@ -9,11 +9,11 @@ use log::{error, info, LevelFilter};
 use tokio::sync::RwLock;
 
 // Project imports
-use crate::providers::cloudflare::structs::CfConfig;
+use crate::providers::cloudflare::types::CfConfig;
 
 // Current module imports
 use super::constants::DEFAULT_CONFIG;
-use super::structs::{ConfigManager, Settings};
+use super::types::{ConfigManager, Settings};
 
 impl Settings {
     pub fn get_log_level(&self) -> String {
