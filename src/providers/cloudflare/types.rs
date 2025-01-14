@@ -14,6 +14,7 @@ use crate::metrics::{HealthChecker, MetricsManager};
 use crate::providers::traits::DnsProvider;
 use crate::utility::rate_limiter::traits::RateLimiter;
 use crate::utility::rate_limiter::types::{RateLimitConfig, TokenBucketRateLimiter};
+use crate::utility::SharedDnsCache;
 
 use super::errors::CloudflareError;
 use super::functions::create_reqwest_client;
@@ -25,6 +26,7 @@ pub struct Cloudflare {
     rate_limiter: Arc<dyn RateLimiter>,
     metrics: Arc<MetricsManager>,
     health: Arc<HealthChecker>,
+    pub cache: SharedDnsCache,
 }
 
 // Manual Debug implementation for Cloudflare
@@ -36,6 +38,7 @@ impl fmt::Debug for Cloudflare {
             .field("rate_limiter", &"<rate limiter>")
             .field("metrics", &self.metrics)
             .field("health", &self.health)
+            .field("cache", &self.cache)
             .finish()
     }
 }
@@ -49,6 +52,7 @@ impl Clone for Cloudflare {
             rate_limiter: Arc::clone(&self.rate_limiter),
             metrics: Arc::clone(&self.metrics),
             health: Arc::clone(&self.health),
+            cache: self.cache.clone(),
         }
     }
 }
@@ -116,6 +120,7 @@ impl Cloudflare {
         config: CfConfig,
         metrics: Arc<MetricsManager>,
         health: Arc<HealthChecker>,
+        cache: SharedDnsCache,
     ) -> Result<Self, CloudflareError> {
         let client = create_reqwest_client(&config)?;
         let rate_limiter = Arc::new(TokenBucketRateLimiter::new(config.rate_limit.clone()));
@@ -126,6 +131,7 @@ impl Cloudflare {
             rate_limiter,
             metrics,
             health,
+            cache,
         })
     }
 
@@ -158,6 +164,7 @@ impl DnsProvider for Cloudflare {
             config,
             Arc::new(MetricsManager::new()),
             Arc::new(HealthChecker::new()),
+            SharedDnsCache::new(60), // Default 1 minute TTL
         )
     }
 

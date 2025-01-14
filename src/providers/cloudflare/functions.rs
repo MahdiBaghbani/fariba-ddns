@@ -1,7 +1,8 @@
 // Standard library
 use std::error::Error;
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
+use std::time::Instant;
 
 // 3rd party crates
 use futures::{stream::FuturesUnordered, StreamExt};
@@ -15,10 +16,11 @@ use tracing::{debug, error, info, warn};
 use crate::metrics::{HealthChecker, MetricsManager};
 use crate::providers::DnsProvider;
 use crate::settings::types::{ConfigManager, Settings};
+use crate::utility::{CachedRecord, SharedDnsCache};
 
 use super::constants::CLOUDFLARE_API_BASE;
 use super::errors::CloudflareError;
-use super::types::{CfConfig, Cloudflare, DnsResponse, ZoneResponse};
+use super::types::{CfConfig, Cloudflare, DnsResponse, DnsResponseResult, ZoneResponse};
 
 /// Creates a reqwest client with the appropriate headers for Cloudflare API.
 pub(super) fn create_reqwest_client(cloudflare: &CfConfig) -> Result<Client, CloudflareError> {
@@ -321,6 +323,22 @@ async fn fetch_dns_records(
     cloudflare: &Cloudflare,
     domain: &str,
 ) -> Result<DnsResponse, CloudflareError> {
+    // Check cache first
+    if let Some(cached) = cloudflare.cache.get(domain).await {
+        debug!(
+            zone = %cloudflare.config.name,
+            domain = %domain,
+            "Using cached DNS record"
+        );
+        return Ok(DnsResponse {
+            result: vec![DnsResponseResult {
+                id: cached.record_id,
+                content: cached.ip.to_string(),
+                r#type: "".to_string(),
+            }],
+        });
+    }
+
     let url = format!(
         "{}/zones/{}/dns_records?type=A&name={}",
         CLOUDFLARE_API_BASE, cloudflare.config.zone_id, domain
@@ -362,31 +380,39 @@ async fn fetch_dns_records(
                 "Received DNS records response"
             );
 
-            serde_json::from_str(&response_text).map_err(|e| CloudflareError::FetchFailed {
-                zone: cloudflare.config.name.clone(),
-                message: format!("Failed to parse response: {} - Raw: {}", e, response_text),
-            })
+            let dns_response: DnsResponse =
+                serde_json::from_str(&response_text).map_err(|e| CloudflareError::FetchFailed {
+                    zone: cloudflare.config.name.clone(),
+                    message: format!("Failed to parse response: {}", e),
+                })?;
+
+            // Cache the result if we got records
+            if let Some(record) = dns_response.result.first() {
+                if let Ok(ip) = record.content.parse::<IpAddr>() {
+                    cloudflare
+                        .cache
+                        .insert(
+                            domain.to_string(),
+                            CachedRecord {
+                                ip,
+                                record_id: record.id.clone(),
+                                provider: "cloudflare".to_string(),
+                                timestamp: Instant::now(),
+                            },
+                        )
+                        .await;
+                }
+            }
+
+            Ok(dns_response)
         }
         StatusCode::UNAUTHORIZED => Err(CloudflareError::InvalidApiToken(
             cloudflare.config.name.clone(),
         )),
-        StatusCode::NOT_FOUND => Err(CloudflareError::FetchFailed {
+        _ => Err(CloudflareError::FetchFailed {
             zone: cloudflare.config.name.clone(),
-            message: format!("Zone or DNS record not found for domain {}", domain),
+            message: format!("HTTP {}", status),
         }),
-        StatusCode::TOO_MANY_REQUESTS => {
-            Err(CloudflareError::RateLimited(cloudflare.config.name.clone()))
-        }
-        _ => {
-            let error_body = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "Unknown error".to_string());
-            Err(CloudflareError::FetchFailed {
-                zone: cloudflare.config.name.clone(),
-                message: format!("HTTP {} - {}", status, error_body),
-            })
-        }
     }
 }
 
@@ -429,7 +455,30 @@ async fn update_record(
         });
     }
 
+    // Invalidate cache for this domain
+    if let Some(domain) = get_domain_for_record_id(cloudflare, record_id).await {
+        cloudflare.cache.invalidate(&domain).await;
+    }
+
     Ok(())
+}
+
+/// Helper function to get domain from record_id
+async fn get_domain_for_record_id(cloudflare: &Cloudflare, record_id: &str) -> Option<String> {
+    for subdomain in &cloudflare.config.subdomains {
+        let full_domain = if subdomain.name.is_empty() {
+            cloudflare.config.name.clone()
+        } else {
+            format!("{}.{}", subdomain.name, cloudflare.config.name)
+        };
+
+        if let Ok(response) = fetch_dns_records(cloudflare, &full_domain).await {
+            if response.result.iter().any(|r| r.id == record_id) {
+                return Some(full_domain);
+            }
+        }
+    }
+    None
 }
 
 /// Gets all enabled Cloudflare instances with shared monitoring
@@ -437,21 +486,24 @@ pub async fn get_cloudflares_with_monitoring(
     config: Arc<ConfigManager>,
     metrics: Arc<MetricsManager>,
     health: Arc<HealthChecker>,
-) -> Result<Vec<Cloudflare>, CloudflareError> {
-    let settings: RwLockReadGuard<Settings> = config.get_settings().await;
+) -> Result<Vec<Cloudflare>, Box<dyn Error>> {
+    let settings: RwLockReadGuard<Settings> = config.settings.read().await;
+    let cache = SharedDnsCache::new(settings.cache.ttl);
 
-    // Convert the vector of `CloudflareConfig` into a vector of `Cloudflare` with shared monitoring
-    let cloudflares: Vec<Cloudflare> = settings
-        .get_cloudflares()
-        .into_iter()
-        .filter_map(|config| {
-            match Cloudflare::new_with_monitoring(config, metrics.clone(), health.clone()) {
-                Ok(cf) if cf.is_enabled() => Some(cf),
-                _ => None,
+    let mut cloudflares = Vec::new();
+    for cf_config in settings.cloudflare.iter() {
+        if cf_config.enabled {
+            match Cloudflare::new_with_monitoring(
+                cf_config.clone(),
+                Arc::clone(&metrics),
+                Arc::clone(&health),
+                cache.clone(),
+            ) {
+                Ok(cloudflare) => cloudflares.push(cloudflare),
+                Err(e) => error!("Failed to create Cloudflare instance: {}", e),
             }
-        })
-        .collect();
-
+        }
+    }
     Ok(cloudflares)
 }
 
