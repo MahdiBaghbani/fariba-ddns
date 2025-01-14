@@ -111,7 +111,7 @@ pub struct ZoneResponseResult {
 }
 
 impl Cloudflare {
-    /// Creates a new Cloudflare instance with metrics and health checking
+    /// Creates a new Cloudflare instance with the provided metrics and health monitoring
     pub fn new_with_monitoring(
         config: CfConfig,
         metrics: Arc<MetricsManager>,
@@ -152,6 +152,8 @@ impl DnsProvider for Cloudflare {
     type Error = CloudflareError;
 
     fn new(config: Self::Config) -> Result<Self, Self::Error> {
+        // This is just a convenience method that creates default monitoring
+        // It should only be used for testing or when monitoring is not required
         Self::new_with_monitoring(
             config,
             Arc::new(MetricsManager::new()),

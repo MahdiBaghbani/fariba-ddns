@@ -12,6 +12,7 @@ use tokio::sync::RwLockReadGuard;
 use tracing::{debug, error, info, warn};
 
 // Project modules
+use crate::metrics::{HealthChecker, MetricsManager};
 use crate::providers::DnsProvider;
 use crate::settings::types::{ConfigManager, Settings};
 
@@ -431,19 +432,23 @@ async fn update_record(
     Ok(())
 }
 
-/// Gets all enabled Cloudflare instances from the configuration.
-pub async fn get_cloudflares(
+/// Gets all enabled Cloudflare instances with shared monitoring
+pub async fn get_cloudflares_with_monitoring(
     config: Arc<ConfigManager>,
+    metrics: Arc<MetricsManager>,
+    health: Arc<HealthChecker>,
 ) -> Result<Vec<Cloudflare>, CloudflareError> {
     let settings: RwLockReadGuard<Settings> = config.get_settings().await;
 
-    // Convert the vector of `CloudflareConfig` into a vector of `Cloudflare`.
+    // Convert the vector of `CloudflareConfig` into a vector of `Cloudflare` with shared monitoring
     let cloudflares: Vec<Cloudflare> = settings
         .get_cloudflares()
         .into_iter()
-        .filter_map(|config| match Cloudflare::new(config) {
-            Ok(cf) if cf.is_enabled() => Some(cf),
-            _ => None,
+        .filter_map(|config| {
+            match Cloudflare::new_with_monitoring(config, metrics.clone(), health.clone()) {
+                Ok(cf) if cf.is_enabled() => Some(cf),
+                _ => None,
+            }
         })
         .collect();
 

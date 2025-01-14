@@ -18,7 +18,7 @@ mod utility;
 // Project imports
 use crate::metrics::{HealthChecker, MetricsManager};
 use crate::providers::cloudflare::errors::CloudflareError;
-use crate::providers::cloudflare::functions::{get_cloudflares, process_updates};
+use crate::providers::cloudflare::functions::{get_cloudflares_with_monitoring, process_updates};
 use crate::providers::cloudflare::types::Cloudflare;
 use crate::providers::DnsProvider;
 use crate::settings::types::{ConfigManager, Settings};
@@ -73,8 +73,9 @@ async fn run(
 
     info!("🕰️ Updating DNS records every {} seconds", update_interval);
 
-    // Fetch settings and create Cloudflare instances
-    let cloudflares: Vec<Cloudflare> = get_cloudflares(config).await?;
+    // Fetch settings and create Cloudflare instances with shared metrics and health monitoring
+    let cloudflares: Vec<Cloudflare> =
+        get_cloudflares_with_monitoring(config, metrics, health).await?;
 
     let mut previous_ipv4: Option<Ipv4Addr> = None;
     let mut previous_ipv6: Option<std::net::Ipv6Addr> = None;
