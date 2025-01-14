@@ -25,6 +25,13 @@ pub enum CloudflareError {
     #[error("Failed to fetch DNS records for zone '{zone}': {message}")]
     FetchFailed { zone: String, message: String },
 
+    #[error("Failed to create DNS record for domain '{domain}' in zone '{zone}': {message}")]
+    CreateFailed {
+        zone: String,
+        domain: String,
+        message: String,
+    },
+
     #[error("Rate limit exceeded for zone '{0}'")]
     RateLimited(String),
 
@@ -36,4 +43,14 @@ pub enum CloudflareError {
 
     #[error("Zone '{0}' is not active (status: {1})")]
     InactiveZone(String, String),
+
+    #[error("Operation timed out for zone '{zone}': {message}")]
+    Timeout { zone: String, message: String },
+
+    #[error("DNS record operation failed for zone '{zone}' after {retries} retries: {message}")]
+    RetryExhausted {
+        zone: String,
+        retries: u32,
+        message: String,
+    },
 }
