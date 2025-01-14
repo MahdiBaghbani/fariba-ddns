@@ -52,9 +52,9 @@ checksum = "7d902e3d592a523def97af8f317b08ce16b7ab854c1985a0c671e6f15cebc236"
 
 [[package]]
 name = "async-trait"
-version = "0.1.81"
+version = "0.1.85"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e0c28dcc82d7c8ead5cb13beb15405b57b8546e93215673ff8ca0349a028107"
+checksum = "3f934833b4b7233644e5848f235df3f57ed8c80f1528a26c3dfa13d2147fa056"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -417,6 +417,7 @@ dependencies = [
 name = "fariba-ddns"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "config",
  "dirs",
  "dotenvy",
@@ -426,7 +427,6 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "strfmt",
  "thiserror 2.0.11",
  "tokio",
  "tracing",
@@ -1681,12 +1681,6 @@ name = "spin"
 version = "0.9.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
-
-[[package]]
-name = "strfmt"
-version = "0.2.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a8348af2d9fc3258c8733b8d9d8db2e56f54b2363a4b5b81585c7875ed65e65"
 
 [[package]]
 name = "strsim"
