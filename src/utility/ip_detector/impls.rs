@@ -108,11 +108,14 @@ impl IpDetector {
         responses: Vec<IpResponse>,
         min_consensus: u32,
     ) -> Result<IpAddr, IpDetectionError> {
-        // Filter primary responses if available
-        let filtered_responses: Vec<_> = if responses.iter().any(|r| r.is_primary) {
-            responses.into_iter().filter(|r| r.is_primary).collect()
+        // Only filter for primary services if we have enough primary responses for consensus
+        let primary_responses: Vec<_> = responses.iter().filter(|r| r.is_primary).collect();
+
+        // Use all responses if we don't have enough primary responses
+        let filtered_responses = if primary_responses.len() >= min_consensus as usize {
+            primary_responses
         } else {
-            responses
+            responses.iter().collect()
         };
 
         // Check if we have enough responses for consensus
@@ -126,7 +129,7 @@ impl IpDetector {
 
         // Find the most common IP address
         let mut ip_counts = HashMap::new();
-        for response in &filtered_responses {
+        for response in filtered_responses {
             *ip_counts.entry(response.ip).or_insert(0) += 1;
         }
 

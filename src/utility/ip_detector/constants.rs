@@ -2,11 +2,11 @@
 use crate::utility::ip_detector::types::IpService;
 
 /// Number of primary IP detection services
-pub const PRIMARY_SERVICE_COUNT: usize = 3; // Manually counted from IP_SERVICES array
+pub const PRIMARY_SERVICE_COUNT: usize = 3;
 
 /// Default settings
 pub const DEFAULT_MAX_REQUESTS_PER_HOUR: u32 = 200;
-pub const DEFAULT_MIN_CONSENSUS: u32 = 4;
+pub const DEFAULT_MIN_CONSENSUS: u32 = 3;
 pub const DEFAULT_MAX_NETWORK_RETRY_INTERVAL: u64 = 30;
 
 /// HTTP client settings
@@ -18,59 +18,59 @@ pub const RETRY_DELAY_MS: u64 = 500;
 pub const IP_SERVICES: [IpService; 8] = [
     // Primary services (more reliable)
     IpService {
-        base_url: "https://api.ipify.org",
+        base_url: "https://api64.ipify.org",
+        v4_path: "?format=text",
+        v6_path: "?format=text",
+        supports_v6: true,
+        is_primary: true,
+    },
+    IpService {
+        base_url: "https://v4.ident.me",
         v4_path: "",
-        v6_path: "?format=6",
-        supports_v6: true,
+        v6_path: "",
+        supports_v6: false,
         is_primary: true,
     },
     IpService {
-        base_url: "https://api.ip.sb",
-        v4_path: "/ip",
-        v6_path: "/ip",
-        supports_v6: true,
-        is_primary: true,
-    },
-    IpService {
-        base_url: "https://api4.my-ip.io",
-        v4_path: "/ip",
-        v6_path: "/ip",
+        base_url: "https://v6.ident.me",
+        v4_path: "",
+        v6_path: "",
         supports_v6: true,
         is_primary: true,
     },
     // Secondary services (backup)
     IpService {
-        base_url: "https://ip.seeip.org",
-        v4_path: "/json",
-        v6_path: "/jsonip",
+        base_url: "https://api6.my-ip.io",
+        v4_path: "/ip",
+        v6_path: "/ip",
         supports_v6: true,
         is_primary: false,
     },
     IpService {
-        base_url: "https://api.myip.com",
+        base_url: "https://ipv6.icanhazip.com",
+        v4_path: "",
+        v6_path: "",
+        supports_v6: true,
+        is_primary: false,
+    },
+    IpService {
+        base_url: "https://ipv4.icanhazip.com",
         v4_path: "",
         v6_path: "",
         supports_v6: false,
         is_primary: false,
     },
     IpService {
-        base_url: "https://ifconfig.me",
-        v4_path: "/ip",
-        v6_path: "/ip",
-        supports_v6: true,
+        base_url: "https://v4.ipv6-test.com",
+        v4_path: "/api/myip.php",
+        v6_path: "",
+        supports_v6: false,
         is_primary: false,
     },
     IpService {
-        base_url: "https://ip-api.com",
-        v4_path: "/json",
-        v6_path: "/json",
-        supports_v6: true,
-        is_primary: false,
-    },
-    IpService {
-        base_url: "https://ipapi.co",
-        v4_path: "/json",
-        v6_path: "/json",
+        base_url: "https://v6.ipv6-test.com",
+        v4_path: "",
+        v6_path: "/api/myip.php",
         supports_v6: true,
         is_primary: false,
     },
