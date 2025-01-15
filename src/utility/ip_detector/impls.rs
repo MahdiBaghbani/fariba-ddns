@@ -142,20 +142,45 @@ impl IpDetector {
         let min_consensus = self.config.min_consensus as usize;
         let version = V::version();
 
-        // Try primary services first
-        let primary_services: Vec<_> = services.iter().filter(|s| s.is_primary).collect();
-        for (idx, service) in primary_services.iter().enumerate() {
-            let rate_limiter_idx = idx + offset;
+        // Helper function to check consensus and cleanup
+        let check_consensus_and_cleanup =
+            |responses: &[IpResponse],
+             version: IpVersion,
+             rate_limiter_idx: usize,
+             suspended_versions: &Arc<RwLock<HashMap<IpVersion, VersionSuspension>>>|
+             -> Option<Result<IpAddr, IpDetectionError>> {
+                if let Ok(consensus_ip) = self.check_consensus(responses, min_consensus) {
+                    // Clone the Arc before moving into the spawned task
+                    let suspended_versions = Arc::clone(suspended_versions);
+                    let rate_limiter = Arc::clone(&self.rate_limiters[rate_limiter_idx]);
+                    tokio::spawn(async move {
+                        rate_limiter.release().await;
+                        suspended_versions.write().await.remove(&version);
+                    });
+                    return Some(Ok(consensus_ip));
+                }
+                None
+            };
 
+        // Helper function to query a service and handle responses
+        async fn query_service<'a>(
+            detector: &'a IpDetector,
+            service: &'a IpService,
+            rate_limiter_idx: usize,
+            version: IpVersion,
+            responses: &mut Vec<IpResponse>,
+            errors: &mut Vec<IpDetectionError>,
+            check_consensus: impl Fn(&[IpResponse]) -> Option<Result<IpAddr, IpDetectionError>>,
+        ) -> Option<Result<IpAddr, IpDetectionError>> {
             // Check rate limit
-            if !self.rate_limiters[rate_limiter_idx].acquire().await {
+            if !detector.rate_limiters[rate_limiter_idx].acquire().await {
                 errors.push(IpDetectionError::RateLimitExceeded {
                     service: service.base_url.to_string(),
                 });
-                continue;
+                return None;
             }
 
-            match self.query_ip_service_with_retry(service, version).await {
+            let result = match detector.query_ip_service_with_retry(service, version).await {
                 Ok(ip) => {
                     debug!(
                         "Successfully got IP {} from service {}",
@@ -163,65 +188,98 @@ impl IpDetector {
                     );
                     responses.push(IpResponse {
                         ip,
-                        is_primary: true,
+                        is_primary: service.is_primary,
                     });
 
-                    // Check if we have consensus from primary services
-                    if let Ok(consensus_ip) = self.check_consensus(&responses, min_consensus) {
-                        self.rate_limiters[rate_limiter_idx].release().await;
-                        // Clear any suspension state on success
-                        self.suspended_versions.write().await.remove(&version);
-                        return Ok(consensus_ip);
-                    }
+                    // Check if we have consensus
+                    check_consensus(responses)
                 }
                 Err(e) => {
                     error!("Failed to query IP service {}: {}", service.base_url, e);
                     errors.push(e);
+                    None
+                }
+            };
+
+            detector.rate_limiters[rate_limiter_idx].release().await;
+            result
+        }
+
+        // Helper function to try services until consensus is reached
+        async fn try_services<'a>(
+            detector: &'a IpDetector,
+            services: &[&'a IpService],
+            base_offset: usize,
+            version: IpVersion,
+            responses: &mut Vec<IpResponse>,
+            errors: &mut Vec<IpDetectionError>,
+            suspended_versions: &Arc<RwLock<HashMap<IpVersion, VersionSuspension>>>,
+            check_consensus_and_cleanup: impl Fn(
+                &[IpResponse],
+                IpVersion,
+                usize,
+                &Arc<RwLock<HashMap<IpVersion, VersionSuspension>>>,
+            )
+                -> Option<Result<IpAddr, IpDetectionError>>,
+        ) -> Option<Result<IpAddr, IpDetectionError>> {
+            for (idx, service) in services.iter().enumerate() {
+                let rate_limiter_idx = idx + base_offset;
+                if let Some(result) = query_service(
+                    detector,
+                    service,
+                    rate_limiter_idx,
+                    version,
+                    responses,
+                    errors,
+                    |responses| {
+                        check_consensus_and_cleanup(
+                            responses,
+                            version,
+                            rate_limiter_idx,
+                            suspended_versions,
+                        )
+                    },
+                )
+                .await
+                {
+                    return Some(result);
                 }
             }
+            None
+        }
 
-            self.rate_limiters[rate_limiter_idx].release().await;
+        // Try primary services first
+        let primary_services: Vec<_> = services.iter().filter(|s| s.is_primary).collect();
+        if let Some(result) = try_services(
+            self,
+            &primary_services,
+            offset,
+            version,
+            &mut responses,
+            &mut errors,
+            &self.suspended_versions,
+            check_consensus_and_cleanup,
+        )
+        .await
+        {
+            return result;
         }
 
         // If no consensus from primary services, try secondary services
         let secondary_services: Vec<_> = services.iter().filter(|s| !s.is_primary).collect();
-        for (idx, service) in secondary_services.iter().enumerate() {
-            let rate_limiter_idx = idx + offset + primary_services.len();
-
-            // Check rate limit
-            if !self.rate_limiters[rate_limiter_idx].acquire().await {
-                errors.push(IpDetectionError::RateLimitExceeded {
-                    service: service.base_url.to_string(),
-                });
-                continue;
-            }
-
-            match self.query_ip_service_with_retry(service, version).await {
-                Ok(ip) => {
-                    debug!(
-                        "Successfully got IP {} from service {}",
-                        ip, service.base_url
-                    );
-                    responses.push(IpResponse {
-                        ip,
-                        is_primary: false,
-                    });
-
-                    // Check if we have consensus with all responses
-                    if let Ok(consensus_ip) = self.check_consensus(&responses, min_consensus) {
-                        self.rate_limiters[rate_limiter_idx].release().await;
-                        // Clear any suspension state on success
-                        self.suspended_versions.write().await.remove(&version);
-                        return Ok(consensus_ip);
-                    }
-                }
-                Err(e) => {
-                    error!("Failed to query IP service {}: {}", service.base_url, e);
-                    errors.push(e);
-                }
-            }
-
-            self.rate_limiters[rate_limiter_idx].release().await;
+        if let Some(result) = try_services(
+            self,
+            &secondary_services,
+            offset + primary_services.len(),
+            version,
+            &mut responses,
+            &mut errors,
+            &self.suspended_versions,
+            check_consensus_and_cleanup,
+        )
+        .await
+        {
+            return result;
         }
 
         // Handle failures and suspension
