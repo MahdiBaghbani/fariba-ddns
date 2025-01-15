@@ -19,17 +19,19 @@ use crate::providers::cloudflare::functions::{get_cloudflares, process_updates};
 use crate::providers::cloudflare::types::Cloudflare;
 use crate::providers::DnsProvider;
 use crate::settings::types::{ConfigManager, Settings};
+use crate::utility::ip_detector::types::{IpDetector, IpVersion};
 
 /// Main entry point for the DDNS client.
 /// This application monitors public IP addresses and updates DNS records
 /// when changes are detected. It supports both IPv4 and IPv6 addresses.
 ///
 /// Features:
-/// - Automatic IP change detection
+/// - Automatic IP change detection with consensus validation
 /// - Support for multiple DNS providers
 /// - Concurrent DNS updates
 /// - Rate limiting to respect API limits
 /// - Configurable update intervals
+/// - Network connectivity monitoring
 /// - Detailed logging
 #[tokio::main]
 async fn main() {
@@ -69,76 +71,78 @@ async fn main() {
 /// Main application loop that handles IP monitoring and DNS updates.
 ///
 /// This function:
-/// - Monitors public IPv4 and IPv6 addresses
-/// - Detects IP address changes
+/// - Monitors public IPv4 and IPv6 addresses with consensus validation
+/// - Detects IP address changes reliably
 /// - Updates DNS records when changes occur
-/// - Handles errors and retries
-/// - Respects configured update intervals
+/// - Handles network connectivity issues
+/// - Respects configured update intervals and rate limits
 async fn run(config: Arc<ConfigManager>) -> Result<(), Box<dyn Error>> {
-    let update_interval: u64 = config.get_update_interval().await;
-
+    let settings = config.settings.read().await;
+    let update_interval: u64 = settings.update.interval;
     info!("🕰️ Updating DNS records every {} seconds", update_interval);
 
+    // Initialize IP detector with configuration
+    let ip_detector = IpDetector::new(settings.ip_detection.clone());
+
     // Fetch settings and create Cloudflare instances
-    let cloudflares: Vec<Cloudflare> = get_cloudflares(config).await?;
+    let cloudflares: Vec<Cloudflare> = get_cloudflares(Arc::clone(&config)).await?;
+
+    // Drop the settings lock
+    drop(settings);
 
     let mut previous_ipv4: Option<Ipv4Addr> = None;
     let mut previous_ipv6: Option<Ipv6Addr> = None;
 
     loop {
-        // Get the public IPv4 address
-        match get_public_ip_v4().await {
-            Some(ip) => {
-                if Some(ip) != previous_ipv4 {
-                    info!("Public 🧩 IPv4 detected: {}", ip);
-                    previous_ipv4 = Some(ip);
+        // Check network connectivity first
+        if !ip_detector.check_network().await {
+            warn!("Network connectivity lost, waiting for recovery");
+            tokio::time::sleep(Duration::from_secs(
+                ip_detector.get_network_retry_interval(),
+            ))
+            .await;
+            continue;
+        }
+
+        // Get the public IPv4 address with consensus
+        if let Some(ip) = ip_detector.detect_ip(IpVersion::V4).await {
+            if let IpAddr::V4(ipv4) = ip {
+                if Some(ipv4) != previous_ipv4 {
+                    info!("Public 🧩 IPv4 detected with consensus: {}", ipv4);
+                    previous_ipv4 = Some(ipv4);
 
                     // Process updates
-                    if let Err(e) = process_updates(&cloudflares, &IpAddr::V4(ip)).await {
+                    if let Err(e) = process_updates(&cloudflares, &IpAddr::V4(ipv4)).await {
                         error!("Error updating IPv4 records: {}", e);
                     }
                 } else {
                     debug!("🧩 IPv4 address unchanged");
                 }
             }
-            None => {
-                warn!("🧩 IPv4 not detected");
-            }
+        } else {
+            warn!("🧩 IPv4 not detected or consensus not reached");
         }
 
-        // Get the public IPv6 address
-        match get_public_ip_v6().await {
-            Some(ip) => {
-                if Some(ip) != previous_ipv6 {
-                    info!("Public 🧩 IPv6 detected: {}", ip);
-                    previous_ipv6 = Some(ip);
+        // Get the public IPv6 address with consensus
+        if let Some(ip) = ip_detector.detect_ip(IpVersion::V6).await {
+            if let IpAddr::V6(ipv6) = ip {
+                if Some(ipv6) != previous_ipv6 {
+                    info!("Public 🧩 IPv6 detected with consensus: {}", ipv6);
+                    previous_ipv6 = Some(ipv6);
 
                     // Process updates
-                    if let Err(e) = process_updates(&cloudflares, &IpAddr::V6(ip)).await {
+                    if let Err(e) = process_updates(&cloudflares, &IpAddr::V6(ipv6)).await {
                         error!("Error updating IPv6 records: {}", e);
                     }
                 } else {
                     debug!("🧩 IPv6 address unchanged");
                 }
             }
-            None => {
-                debug!("🧩 IPv6 not detected");
-            }
+        } else {
+            debug!("🧩 IPv6 not detected or consensus not reached");
         }
 
         // Sleep for the update interval duration
         tokio::time::sleep(Duration::from_secs(update_interval)).await;
     }
-}
-
-/// Attempts to get the current public IPv4 address.
-/// Uses the public_ip crate to query various IP detection services.
-async fn get_public_ip_v4() -> Option<Ipv4Addr> {
-    public_ip::addr_v4().await
-}
-
-/// Attempts to get the current public IPv6 address.
-/// Uses the public_ip crate to query various IP detection services.
-async fn get_public_ip_v6() -> Option<Ipv6Addr> {
-    public_ip::addr_v6().await
 }

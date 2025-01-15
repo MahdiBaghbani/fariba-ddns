@@ -8,6 +8,7 @@ use tokio::sync::RwLock;
 
 // Project imports
 use crate::providers::cloudflare::types::CfConfig;
+use crate::utility::ip_detector::types::IpDetection;
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct Log {
@@ -25,7 +26,8 @@ pub struct Update {
 pub struct Settings {
     pub log: Log,
     pub update: Update,
-
+    #[serde(default)]
+    pub ip_detection: IpDetection,
     #[serde(default)]
     pub cloudflare: Vec<CfConfig>,
 }
