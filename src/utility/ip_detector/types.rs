@@ -1,3 +1,4 @@
+use std::net::IpAddr;
 // Standard library
 use std::sync::Arc;
 use std::time::Instant;
@@ -9,7 +10,7 @@ use tokio::sync::RwLock;
 // Project imports
 use crate::utility::rate_limiter::traits::RateLimiter;
 
-use super::functions::{
+use super::constants::{
     default_max_requests_per_hour, default_min_consensus, default_network_retry_interval,
 };
 
@@ -39,9 +40,16 @@ pub struct IpService {
     pub v4_path: &'static str,
     pub v6_path: &'static str,
     pub supports_v6: bool,
+    pub is_primary: bool,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
+pub struct IpResponse {
+    pub ip: IpAddr,
+    pub is_primary: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum IpVersion {
     V4,
     V6,

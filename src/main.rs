@@ -105,41 +105,49 @@ async fn run(config: Arc<ConfigManager>) -> Result<(), Box<dyn Error>> {
         }
 
         // Get the public IPv4 address with consensus
-        if let Some(ip) = ip_detector.detect_ip(IpVersion::V4).await {
-            if let IpAddr::V4(ipv4) = ip {
-                if Some(ipv4) != previous_ipv4 {
-                    info!("Public 🧩 IPv4 detected with consensus: {}", ipv4);
-                    previous_ipv4 = Some(ipv4);
+        match ip_detector.detect_ip(IpVersion::V4).await {
+            Ok(ip) => {
+                if let IpAddr::V4(ipv4) = ip {
+                    if Some(ipv4) != previous_ipv4 {
+                        info!("Public 🧩 IPv4 detected with consensus: {}", ipv4);
+                        previous_ipv4 = Some(ipv4);
 
-                    // Process updates
-                    if let Err(e) = process_updates(&cloudflares, &IpAddr::V4(ipv4)).await {
-                        error!("Error updating IPv4 records: {}", e);
+                        // Process updates
+                        if let Err(e) = process_updates(&cloudflares, &ip).await {
+                            error!("Error updating IPv4 records: {}", e);
+                        }
+                    } else {
+                        debug!("🧩 IPv4 address unchanged");
                     }
-                } else {
-                    debug!("🧩 IPv4 address unchanged");
                 }
             }
-        } else {
-            warn!("🧩 IPv4 not detected or consensus not reached");
+            Err(e) => {
+                // Log IPv4 errors as warnings since IPv4 is critical
+                warn!("🧩 IPv4 detection failed: {}", e);
+            }
         }
 
         // Get the public IPv6 address with consensus
-        if let Some(ip) = ip_detector.detect_ip(IpVersion::V6).await {
-            if let IpAddr::V6(ipv6) = ip {
-                if Some(ipv6) != previous_ipv6 {
-                    info!("Public 🧩 IPv6 detected with consensus: {}", ipv6);
-                    previous_ipv6 = Some(ipv6);
+        match ip_detector.detect_ip(IpVersion::V6).await {
+            Ok(ip) => {
+                if let IpAddr::V6(ipv6) = ip {
+                    if Some(ipv6) != previous_ipv6 {
+                        info!("Public 🧩 IPv6 detected with consensus: {}", ipv6);
+                        previous_ipv6 = Some(ipv6);
 
-                    // Process updates
-                    if let Err(e) = process_updates(&cloudflares, &IpAddr::V6(ipv6)).await {
-                        error!("Error updating IPv6 records: {}", e);
+                        // Process updates
+                        if let Err(e) = process_updates(&cloudflares, &ip).await {
+                            error!("Error updating IPv6 records: {}", e);
+                        }
+                    } else {
+                        debug!("🧩 IPv6 address unchanged");
                     }
-                } else {
-                    debug!("🧩 IPv6 address unchanged");
                 }
             }
-        } else {
-            debug!("🧩 IPv6 not detected or consensus not reached");
+            Err(e) => {
+                // Log IPv6 errors as debug since IPv6 is optional
+                debug!("🧩 IPv6 detection failed: {}", e);
+            }
         }
 
         // Sleep for the update interval duration

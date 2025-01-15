@@ -1,4 +1,4 @@
 pub mod constants;
-pub mod functions;
+pub mod errors;
 pub mod impls;
 pub mod types;
