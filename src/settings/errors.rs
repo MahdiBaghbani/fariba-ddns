@@ -1,7 +1,11 @@
 // 3rd party crates
 use thiserror::Error;
 
-#[derive(Error, Debug)]
+// Project imports
+use crate::providers::cloudflare::errors::CloudflareValidationError;
+use crate::utility::ip_detector::errors::IpDetectionValidationError;
+
+#[derive(Debug, Error)]
 pub enum ValidationError {
     #[error("Invalid log level: {0}. Must be one of: error, warn, info, debug, trace")]
     InvalidLogLevel(String),
@@ -9,8 +13,8 @@ pub enum ValidationError {
     InvalidUpdateInterval(u64),
     #[error("No providers are enabled")]
     NoProvidersEnabled,
-    #[error("Invalid Cloudflare configuration: {0}")]
-    CloudflareConfig(String),
-    #[error("Invalid IP detection configuration: {0}")]
-    IpDetectionConfig(String),
+    #[error("Cloudflare configuration error: {0}")]
+    CloudflareConfig(#[from] CloudflareValidationError),
+    #[error("IP detection configuration error: {0}")]
+    IpDetectionConfig(#[from] IpDetectionValidationError),
 }

@@ -56,4 +56,33 @@ pub enum CloudflareError {
 
     #[error("DNS update operation timed out")]
     UpdateTimeout,
+
+    #[error("API error: {0}")]
+    Api(String),
+
+    #[error("Rate limit exceeded")]
+    RateLimitExceeded,
+
+    #[error("Network error: {0}")]
+    Network(String),
+
+    #[error("Invalid response: {0}")]
+    InvalidResponse(String),
+
+    #[error("Validation error: {0}")]
+    Validation(#[from] CloudflareValidationError),
+}
+
+#[derive(Debug, Error)]
+pub enum CloudflareValidationError {
+    #[error("Missing or empty zone_id")]
+    MissingZoneId,
+    #[error("Missing or empty api_token")]
+    MissingApiToken,
+    #[error("Missing or empty name")]
+    MissingName,
+    #[error("No subdomains configured")]
+    NoSubdomains,
+    #[error("Invalid rate limit: {0}")]
+    InvalidRateLimit(String),
 }

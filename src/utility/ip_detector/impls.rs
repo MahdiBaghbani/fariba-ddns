@@ -13,12 +13,13 @@ use tracing::{debug, error, warn};
 use crate::utility::rate_limiter::traits::RateLimiter;
 use crate::utility::rate_limiter::types::{RateLimitConfig, TokenBucketRateLimiter};
 
+// Current module imports
 use super::constants::{
     DEFAULT_MAX_NETWORK_RETRY_INTERVAL, DEFAULT_MAX_REQUESTS_PER_HOUR, DEFAULT_MIN_CONSENSUS,
     IPV4_SERVICES, IPV6_SERVICES, MAX_CONSECUTIVE_FAILURES, MAX_RETRIES, REQUEST_TIMEOUT_SECS,
     RETRY_DELAY_MS, SUSPENSION_DURATION_SECS,
 };
-use super::errors::IpDetectionError;
+use super::errors::{IpDetectionError, IpDetectionValidationError};
 use super::traits::IpVersionOps;
 use super::types::{
     IpDetection, IpDetector, IpResponse, IpService, IpVersion, VersionSuspension, V4, V6,
@@ -31,6 +32,48 @@ impl Default for IpDetection {
             min_consensus: DEFAULT_MIN_CONSENSUS,
             network_retry_interval: DEFAULT_MAX_NETWORK_RETRY_INTERVAL,
         }
+    }
+}
+
+impl IpDetection {
+    pub fn validate(&self) -> Result<(), IpDetectionValidationError> {
+        // Validate max_requests_per_hour (must be > 0)
+        if self.max_requests_per_hour == 0 {
+            return Err(IpDetectionValidationError::InvalidMaxRequests(
+                "must be greater than 0".into(),
+            ));
+        }
+
+        // Validate min_consensus (must be > 0 and <= total number of services)
+        if self.min_consensus == 0 {
+            return Err(IpDetectionValidationError::InvalidMinConsensus(
+                "must be greater than 0".into(),
+            ));
+        }
+
+        // Get total number of services (IPv4 + IPv6)
+        let total_services = IPV4_SERVICES.len() + IPV6_SERVICES.len();
+        if self.min_consensus as usize > total_services {
+            return Err(IpDetectionValidationError::InvalidMinConsensus(format!(
+                "cannot be greater than total number of services ({})",
+                total_services
+            )));
+        }
+
+        // Validate network_retry_interval (must be > 0 and <= max allowed)
+        if self.network_retry_interval == 0 {
+            return Err(IpDetectionValidationError::InvalidRetryInterval(
+                "must be greater than 0".into(),
+            ));
+        }
+        if self.network_retry_interval > DEFAULT_MAX_NETWORK_RETRY_INTERVAL {
+            return Err(IpDetectionValidationError::InvalidRetryInterval(format!(
+                "cannot be greater than maximum allowed ({})",
+                DEFAULT_MAX_NETWORK_RETRY_INTERVAL
+            )));
+        }
+
+        Ok(())
     }
 }
 
@@ -410,53 +453,6 @@ impl VersionSuspension {
         Self {
             suspended_since: Instant::now(),
             consecutive_failures: 1,
-        }
-    }
-}
-
-impl std::error::Error for IpDetectionError {}
-
-impl fmt::Display for IpDetectionError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::NetworkError { service, error } => {
-                write!(f, "Network error from {}: {}", service, error)
-            }
-            Self::InvalidResponse { service, response } => {
-                write!(f, "Invalid response from {}: {}", service, response)
-            }
-            Self::VersionMismatch {
-                service,
-                expected,
-                got,
-            } => write!(
-                f,
-                "IP version mismatch from {}: expected {:?}, got {:?}",
-                service, expected, got
-            ),
-            Self::RateLimitExceeded { service } => {
-                write!(f, "Rate limit exceeded for {}", service)
-            }
-            Self::ParseError { service, error } => {
-                write!(f, "Parse error from {}: {}", service, error)
-            }
-            Self::ConsensusNotReached {
-                responses,
-                required,
-            } => write!(
-                f,
-                "Consensus not reached: got {} responses, need {}",
-                responses, required
-            ),
-            Self::NoServicesAvailable => write!(f, "No IP detection services available"),
-            Self::VersionSuspended {
-                version,
-                remaining_secs,
-            } => write!(
-                f,
-                "{:?} detection suspended for {} seconds",
-                version, remaining_secs
-            ),
         }
     }
 }

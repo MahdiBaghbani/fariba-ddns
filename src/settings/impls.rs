@@ -52,8 +52,8 @@ impl Settings {
             cf_config.validate()?;
         }
 
-        // TODO @MahdiBaghbani: Validate IP detection configuration
-        // self.ip_detection.validate()?;
+        // Validate IP detection configuration
+        self.ip_detection.validate()?;
 
         Ok(())
     }

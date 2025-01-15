@@ -1,36 +1,55 @@
 // 3rd party crates
-use reqwest;
+use thiserror::Error;
 
-// Project imports
+// Current module imports
 use super::types::IpVersion;
 
-/// Custom error type for IP detection
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum IpDetectionError {
-    /// Network error when contacting service
+    #[error("Network error from {service}: {error}")]
     NetworkError {
         service: String,
         error: reqwest::Error,
     },
-    /// Invalid response from service
+
+    #[error("Invalid response from {service}: {response}")]
     InvalidResponse { service: String, response: String },
-    /// IP version mismatch
+
+    #[error("IP version mismatch from {service}: expected {expected:?}, got {got:?}")]
     VersionMismatch {
         service: String,
         expected: IpVersion,
         got: IpVersion,
     },
-    /// Rate limit exceeded
+
+    #[error("Rate limit exceeded for {service}")]
     RateLimitExceeded { service: String },
-    /// Parsing error
+
+    #[error("Parse error from {service}: {error}")]
     ParseError { service: String, error: String },
-    /// Consensus not reached
+
+    #[error("Consensus not reached: got {responses} responses, need {required}")]
     ConsensusNotReached { responses: usize, required: u32 },
-    /// No services available
+
+    #[error("No IP detection services available")]
     NoServicesAvailable,
-    /// Version suspended
+
+    #[error("{version:?} detection suspended for {remaining_secs} seconds")]
     VersionSuspended {
         version: IpVersion,
         remaining_secs: u64,
     },
+
+    #[error("Validation error: {0}")]
+    Validation(#[from] IpDetectionValidationError),
+}
+
+#[derive(Debug, Error)]
+pub enum IpDetectionValidationError {
+    #[error("Invalid max_requests_per_hour: {0}")]
+    InvalidMaxRequests(String),
+    #[error("Invalid min_consensus: {0}")]
+    InvalidMinConsensus(String),
+    #[error("Invalid network_retry_interval: {0}")]
+    InvalidRetryInterval(String),
 }
