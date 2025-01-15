@@ -33,6 +33,14 @@ pub struct IpDetector {
     pub client: reqwest::Client,
 }
 
+/// Service configuration for IP detection
+pub struct IpService {
+    pub base_url: &'static str,
+    pub v4_path: &'static str,
+    pub v6_path: &'static str,
+    pub supports_v6: bool,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum IpVersion {
     V4,
