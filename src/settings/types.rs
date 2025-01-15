@@ -45,3 +45,6 @@ pub struct ConfigManager {
     pub settings: Arc<RwLock<Settings>>,
     pub _config_path: PathBuf,
 }
+
+#[derive(Debug, Clone)]
+pub struct ValidatedSettings(pub Settings);

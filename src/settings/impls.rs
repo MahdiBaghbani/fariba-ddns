@@ -13,7 +13,8 @@ use crate::providers::cloudflare::types::CfConfig;
 
 // Current module imports
 use super::constants::DEFAULT_CONFIG;
-use super::types::{ConfigManager, Settings};
+use super::errors::ValidationError;
+use super::types::{ConfigManager, Settings, ValidatedSettings};
 
 impl Settings {
     pub fn get_log_level(&self) -> String {
@@ -27,18 +28,53 @@ impl Settings {
     pub fn get_cloudflares(&self) -> Vec<CfConfig> {
         self.cloudflare.clone()
     }
+
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        // Validate log level
+        match self.log.level.to_lowercase().as_str() {
+            "error" | "warn" | "info" | "debug" | "trace" => {}
+            _ => return Err(ValidationError::InvalidLogLevel(self.log.level.clone())),
+        }
+
+        // Validate update interval
+        if self.update.interval == 0 {
+            return Err(ValidationError::InvalidUpdateInterval(self.update.interval));
+        }
+
+        // Validate that at least one provider is enabled
+        let has_enabled_provider = self.cloudflare.iter().any(|cf| cf.enabled);
+        if !has_enabled_provider {
+            return Err(ValidationError::NoProvidersEnabled);
+        }
+
+        // Validate each enabled Cloudflare config
+        for cf_config in self.cloudflare.iter().filter(|cf| cf.enabled) {
+            cf_config.validate()?;
+        }
+
+        // TODO @MahdiBaghbani: Validate IP detection configuration
+        // self.ip_detection.validate()?;
+
+        Ok(())
+    }
 }
 
 impl ConfigManager {
-    /// Creates a new `ConfigManager` instance by loading the configuration.
-    pub async fn new() -> Result<Self, ConfigError> {
+    /// Creates a new `ConfigManager` instance by loading and validating the configuration.
+    pub async fn new() -> Result<Self, Box<dyn std::error::Error>> {
         let config_path: PathBuf = Self::get_config_path()?;
         Self::ensure_config_file_exists(&config_path)?;
 
         let settings: Settings = Self::load_settings(&config_path)?;
 
+        // Validate settings before proceeding
+        let validated_settings = ValidatedSettings::new(settings).map_err(|e| {
+            error!("Configuration validation failed: {}", e);
+            e
+        })?;
+
         let manager = ConfigManager {
-            settings: Arc::new(RwLock::new(settings)),
+            settings: Arc::new(RwLock::new(validated_settings.into_inner())),
             _config_path: config_path,
         };
 
@@ -96,9 +132,16 @@ impl ConfigManager {
     }
 
     /// Reloads the configuration from the file.
-    pub async fn _reload(&self) -> Result<(), ConfigError> {
+    pub async fn _reload(&self) -> Result<(), Box<dyn std::error::Error>> {
         let new_settings: Settings = Self::load_settings(&self._config_path)?;
-        *self.settings.write().await = new_settings;
+
+        // Validate settings before updating
+        let validated_settings = ValidatedSettings::new(new_settings).map_err(|e| {
+            error!("Configuration validation failed during reload: {}", e);
+            e
+        })?;
+
+        *self.settings.write().await = validated_settings.into_inner();
         self.adjust_logging_level().await;
         info!("Configuration reloaded from {:?}", self._config_path);
         Ok(())
@@ -134,5 +177,25 @@ impl ConfigManager {
 
     pub async fn get_update_interval(&self) -> u64 {
         self.settings.read().await.get_update_interval()
+    }
+}
+
+impl ValidatedSettings {
+    pub fn new(settings: Settings) -> Result<Self, ValidationError> {
+        settings.validate()?;
+        Ok(ValidatedSettings(settings))
+    }
+
+    pub fn into_inner(self) -> Settings {
+        self.0
+    }
+}
+
+// Implement Deref and DerefMut to allow transparent access to Settings fields
+impl std::ops::Deref for ValidatedSettings {
+    type Target = Settings;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
