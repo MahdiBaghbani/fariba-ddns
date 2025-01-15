@@ -145,15 +145,15 @@ async fn process_updates_with_shutdown(
     loop {
         tokio::select! {
             // Handle shutdown signal if provided
-            shutdown = async {
+            Some(shutdown_result) = async {
                 if let Some(rx) = &mut shutdown_rx {
-                    rx.recv().await
+                    Some(rx.recv().await)
                 } else {
-                    Ok(())
+                    None
                 }
             } => {
-                match shutdown {
-                    Ok(_) => {
+                match shutdown_result {
+                    Ok(()) => {
                         info!("Received shutdown signal during DNS updates, waiting for in-progress updates...");
                         // Allow a short time for in-progress updates to complete
                         tokio::time::sleep(Duration::from_secs(5)).await;
