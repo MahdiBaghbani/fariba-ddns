@@ -110,6 +110,36 @@ async fn run(
     // Fetch settings and create Cloudflare instances
     let cloudflares: Vec<Cloudflare> = get_cloudflares(Arc::clone(&config)).await?;
 
+    // Determine which IP versions we need to detect based on subdomain configurations
+    let mut need_ipv4 = false;
+    let mut need_ipv6 = false;
+    for cf in &cloudflares {
+        if !cf.is_enabled() {
+            continue;
+        }
+        for subdomain in &cf.config.subdomains {
+            match subdomain.ip_version {
+                providers::cloudflare::types::IpVersion::V4 => need_ipv4 = true,
+                providers::cloudflare::types::IpVersion::V6 => need_ipv6 = true,
+                providers::cloudflare::types::IpVersion::Both => {
+                    need_ipv4 = true;
+                    need_ipv6 = true;
+                }
+            }
+            if need_ipv4 && need_ipv6 {
+                break;
+            }
+        }
+        if need_ipv4 && need_ipv6 {
+            break;
+        }
+    }
+
+    info!(
+        "IP detection configuration - IPv4: {}, IPv6: {}",
+        need_ipv4, need_ipv6
+    );
+
     // Drop the settings lock
     drop(settings);
 
@@ -123,79 +153,75 @@ async fn run(
 
         tokio::select! {
             // Handle shutdown signal
-            _ = shutdown_rx.recv() => {
-                info!("Shutdown signal received, cleaning up...");
-                // Allow in-progress updates to complete (with timeout)
+            Ok(_) = shutdown_rx.recv() => {
+                info!("Received shutdown signal, waiting for in-progress updates...");
+                // Allow a short time for in-progress updates to complete
                 tokio::time::sleep(Duration::from_secs(5)).await;
-                return Ok(());
+                break;
             }
-            // Main application logic
-            result = async {
-                // Check network connectivity first
-                if !ip_detector.check_network().await {
-                    warn!("Network connectivity lost, waiting for recovery");
-                    tokio::time::sleep(Duration::from_secs(
-                        ip_detector.get_network_retry_interval(),
-                    ))
-                    .await;
-                    return Ok::<(), Box<dyn Error>>(());
-                }
 
-                // Get the public IPv4 address with consensus
-                match ip_detector.detect_ip(IpVersion::V4).await {
-                    Ok(ip) => {
-                        if let IpAddr::V4(ipv4) = ip {
-                            if Some(ipv4) != previous_ipv4 {
-                                info!("Public 🧩 IPv4 detected with consensus: {}", ipv4);
-                                previous_ipv4 = Some(ipv4);
+            // Handle periodic updates
+            _ = tokio::time::sleep(Duration::from_secs(update_interval)) => {
+                debug!("Starting IP detection cycle");
+                // Get the public IPv4 address with consensus if needed
+                if need_ipv4 {
+                    debug!("Detecting IPv4 address");
+                    match ip_detector.detect_ip(IpVersion::V4).await {
+                        Ok(ip) => {
+                            if let IpAddr::V4(ipv4) = ip {
+                                if Some(ipv4) != previous_ipv4 {
+                                    info!("Public 🧩 IPv4 detected with consensus: {}", ipv4);
+                                    previous_ipv4 = Some(ipv4);
 
-                                // Process updates with pre-created subscription
-                                if let Err(e) = process_updates(&cloudflares, &ip, Some(ipv4_shutdown)).await {
-                                    error!("Error updating IPv4 records: {}", e);
+                                    // Process updates with pre-created subscription
+                                    if let Err(e) = process_updates(&cloudflares, &ip, Some(ipv4_shutdown)).await {
+                                        error!("Error updating IPv4 records: {}", e);
+                                    }
+                                } else {
+                                    debug!("🧩 IPv4 address unchanged");
                                 }
-                            } else {
-                                debug!("🧩 IPv4 address unchanged");
                             }
                         }
-                    }
-                    Err(e) => {
-                        // Log IPv4 errors as warnings since IPv4 is critical
-                        warn!("🧩 IPv4 detection failed: {}", e);
-                    }
-                }
-
-                // Get the public IPv6 address with consensus
-                match ip_detector.detect_ip(IpVersion::V6).await {
-                    Ok(ip) => {
-                        if let IpAddr::V6(ipv6) = ip {
-                            if Some(ipv6) != previous_ipv6 {
-                                info!("Public 🧩 IPv6 detected with consensus: {}", ipv6);
-                                previous_ipv6 = Some(ipv6);
-
-                                // Process updates with pre-created subscription
-                                if let Err(e) = process_updates(&cloudflares, &ip, Some(ipv6_shutdown)).await {
-                                    error!("Error updating IPv6 records: {}", e);
-                                }
-                            } else {
-                                debug!("🧩 IPv6 address unchanged");
-                            }
+                        Err(e) => {
+                            // Log IPv4 errors as warnings since IPv4 is critical
+                            warn!("🧩 IPv4 detection failed: {}", e);
                         }
                     }
-                    Err(e) => {
-                        // Log IPv6 errors as debug since IPv6 is optional
-                        debug!("🧩 IPv6 detection failed: {}", e);
-                    }
+                } else {
+                    debug!("Skipping IPv4 detection - not needed by any subdomain");
                 }
 
-                Ok(())
-            } => {
-                if let Err(e) = result {
-                    error!("Error in main loop: {}", e);
+                // Get the public IPv6 address with consensus if needed
+                if need_ipv6 {
+                    debug!("Detecting IPv6 address");
+                    match ip_detector.detect_ip(IpVersion::V6).await {
+                        Ok(ip) => {
+                            if let IpAddr::V6(ipv6) = ip {
+                                if Some(ipv6) != previous_ipv6 {
+                                    info!("Public 🧩 IPv6 detected with consensus: {}", ipv6);
+                                    previous_ipv6 = Some(ipv6);
+
+                                    // Process updates with pre-created subscription
+                                    if let Err(e) = process_updates(&cloudflares, &ip, Some(ipv6_shutdown)).await {
+                                        error!("Error updating IPv6 records: {}", e);
+                                    }
+                                } else {
+                                    debug!("🧩 IPv6 address unchanged");
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            // Log IPv6 errors as debug since IPv6 is optional
+                            debug!("🧩 IPv6 detection failed: {}", e);
+                        }
+                    }
+                } else {
+                    debug!("Skipping IPv6 detection - not needed by any subdomain");
                 }
             }
         }
-
-        // Sleep for the update interval duration
-        tokio::time::sleep(Duration::from_secs(update_interval)).await;
     }
+
+    info!("Shutdown complete.");
+    Ok(())
 }

@@ -19,9 +19,23 @@ api_token = "your_api_token"
 # Rate limiting configuration (optional)
 rate_limit = { max_requests = 30, window_secs = 60 }
 
-# Subdomains to update
-subdomains = [
-    { name = "example.com" },
-    { name = "subdomain.example.com" }
-]
+# List of subdomains to update
+[[cloudflare.subdomains]]
+name = "www"
+# Optional: specify which IP versions to use (v4, v6, or both)
+# Default is "both" if not specified
+ip_version = "both"
+
+[[cloudflare.subdomains]]
+name = "ipv4-only"
+ip_version = "v4"
+
+[[cloudflare.subdomains]]
+name = "ipv6-only"
+ip_version = "v6"
+
+[[cloudflare.subdomains]]
+# Empty name means root domain
+name = ""
+ip_version = "both"
 "#;

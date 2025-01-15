@@ -23,7 +23,7 @@ use super::types::{CfConfig, Cloudflare, DnsResponse, DnsResponseResult, ZoneRes
 
 /// Creates a reqwest client with the appropriate headers for Cloudflare API.
 /// This includes setting up authentication headers and other necessary configuration.
-pub(super) fn create_reqwest_client(cloudflare: &CfConfig) -> Result<Client, CloudflareError> {
+pub fn create_reqwest_client(cloudflare: &CfConfig) -> Result<Client, CloudflareError> {
     if cloudflare.api_token.is_empty() || cloudflare.api_token == "your_api_token_here" {
         error!(
             zone = %cloudflare.name,
@@ -202,7 +202,7 @@ async fn process_updates_with_shutdown(
 /// Fetches DNS records for a specific domain.
 /// This function retrieves the current A or AAAA records for a domain from Cloudflare's API.
 /// It includes error handling for various API response scenarios.
-pub(super) async fn fetch_dns_records(
+async fn fetch_dns_records(
     cloudflare: &Cloudflare,
     domain: &str,
     record_type: &str,
@@ -285,17 +285,27 @@ pub async fn update_dns_records(
     let mut retry_count = 0;
     const MAX_RETRIES: u32 = 3;
 
-    // Skip IPv6 updates if not enabled
-    if matches!(ip, IpAddr::V6(_)) && !cloudflare.config.enable_ipv6 {
-        return Ok(());
-    }
-
     let record_type = match ip {
         IpAddr::V4(_) => "A",
         IpAddr::V6(_) => "AAAA",
     };
 
     for subdomain in &cloudflare.config.subdomains {
+        // Skip if this IP version is not enabled for this subdomain
+        match (ip, &subdomain.ip_version) {
+            (IpAddr::V4(_), super::types::IpVersion::V6)
+            | (IpAddr::V6(_), super::types::IpVersion::V4) => {
+                debug!(
+                    zone = %cloudflare.config.name,
+                    subdomain = %subdomain.name,
+                    ip_type = %record_type,
+                    "Skipping DNS update - IP version not enabled for subdomain"
+                );
+                continue;
+            }
+            _ => {}
+        }
+
         // Construct the full domain name for logging
         let full_domain = if subdomain.name.is_empty() {
             cloudflare.config.name.clone()
@@ -325,7 +335,7 @@ pub async fn update_dns_records(
                             retry = retry_count,
                             "Retrying after error"
                         );
-                        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                        tokio::time::sleep(Duration::from_secs(2)).await;
                         continue;
                     }
                     error!(

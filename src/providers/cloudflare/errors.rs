@@ -85,4 +85,6 @@ pub enum CloudflareValidationError {
     NoSubdomains,
     #[error("Invalid rate limit: {0}")]
     InvalidRateLimit(String),
+    #[error("Invalid IP version configuration: {0}")]
+    InvalidIpVersion(String),
 }
