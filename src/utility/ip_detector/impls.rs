@@ -15,11 +15,14 @@ use crate::utility::rate_limiter::types::{RateLimitConfig, TokenBucketRateLimite
 
 use super::constants::{
     DEFAULT_MAX_NETWORK_RETRY_INTERVAL, DEFAULT_MAX_REQUESTS_PER_HOUR, DEFAULT_MIN_CONSENSUS,
-    IPV4_SERVICES, IPV6_SERVICES, MAX_RETRIES, REQUEST_TIMEOUT_SECS, RETRY_DELAY_MS,
+    IPV4_SERVICES, IPV6_SERVICES, MAX_CONSECUTIVE_FAILURES, MAX_RETRIES, REQUEST_TIMEOUT_SECS,
+    RETRY_DELAY_MS, SUSPENSION_DURATION_SECS,
 };
 use super::errors::IpDetectionError;
 use super::traits::IpVersionOps;
-use super::types::{IpDetection, IpDetector, IpResponse, IpService, IpVersion, V4, V6};
+use super::types::{
+    IpDetection, IpDetector, IpResponse, IpService, IpVersion, VersionSuspension, V4, V6,
+};
 
 impl Default for IpDetection {
     fn default() -> Self {
@@ -57,11 +60,30 @@ impl IpDetector {
                 .user_agent("fariba-ddns/1.0")
                 .build()
                 .unwrap_or_default(),
+            suspended_versions: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
     /// Detects the current public IP address with consensus validation
     pub async fn detect_ip(&self, ip_version: IpVersion) -> Result<IpAddr, IpDetectionError> {
+        // Check if version is suspended
+        if let Some(suspension) = self.suspended_versions.read().await.get(&ip_version) {
+            let elapsed = suspension.suspended_since.elapsed();
+            if elapsed.as_secs() < SUSPENSION_DURATION_SECS {
+                debug!(
+                    "{:?} detection suspended for {} more seconds",
+                    ip_version,
+                    SUSPENSION_DURATION_SECS - elapsed.as_secs()
+                );
+                return Err(IpDetectionError::VersionSuspended {
+                    version: ip_version,
+                    remaining_secs: SUSPENSION_DURATION_SECS - elapsed.as_secs(),
+                });
+            }
+            // Suspension duration expired, remove suspension
+            self.suspended_versions.write().await.remove(&ip_version);
+        }
+
         match ip_version {
             IpVersion::V4 => self.detect_ip_for_version::<V4>().await,
             IpVersion::V6 => self.detect_ip_for_version::<V6>().await,
@@ -75,6 +97,7 @@ impl IpDetector {
         let services = V::get_services();
         let offset = V::rate_limiter_offset();
         let min_consensus = self.config.min_consensus as usize;
+        let version = V::version();
 
         // Try primary services first
         let primary_services: Vec<_> = services.iter().filter(|s| s.is_primary).collect();
@@ -89,10 +112,7 @@ impl IpDetector {
                 continue;
             }
 
-            match self
-                .query_ip_service_with_retry(service, V::version())
-                .await
-            {
+            match self.query_ip_service_with_retry(service, version).await {
                 Ok(ip) => {
                     debug!(
                         "Successfully got IP {} from service {}",
@@ -106,6 +126,8 @@ impl IpDetector {
                     // Check if we have consensus from primary services
                     if let Ok(consensus_ip) = self.check_consensus(&responses, min_consensus) {
                         self.rate_limiters[rate_limiter_idx].release().await;
+                        // Clear any suspension state on success
+                        self.suspended_versions.write().await.remove(&version);
                         return Ok(consensus_ip);
                     }
                 }
@@ -131,10 +153,7 @@ impl IpDetector {
                 continue;
             }
 
-            match self
-                .query_ip_service_with_retry(service, V::version())
-                .await
-            {
+            match self.query_ip_service_with_retry(service, version).await {
                 Ok(ip) => {
                     debug!(
                         "Successfully got IP {} from service {}",
@@ -148,6 +167,8 @@ impl IpDetector {
                     // Check if we have consensus with all responses
                     if let Ok(consensus_ip) = self.check_consensus(&responses, min_consensus) {
                         self.rate_limiters[rate_limiter_idx].release().await;
+                        // Clear any suspension state on success
+                        self.suspended_versions.write().await.remove(&version);
                         return Ok(consensus_ip);
                     }
                 }
@@ -159,6 +180,26 @@ impl IpDetector {
 
             self.rate_limiters[rate_limiter_idx].release().await;
         }
+
+        // Handle failures and suspension
+        let mut suspended_versions = self.suspended_versions.write().await;
+        match suspended_versions.get_mut(&version) {
+            Some(suspension) => {
+                suspension.consecutive_failures += 1;
+                if suspension.consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+                    suspension.suspended_since = Instant::now();
+                    warn!(
+                        "{:?} detection suspended for {} seconds after {} consecutive failures",
+                        version, SUSPENSION_DURATION_SECS, suspension.consecutive_failures
+                    );
+                }
+            }
+            None => {
+                suspended_versions.insert(version, VersionSuspension::new());
+                warn!("First failure for {:?} detection", version);
+            }
+        }
+        drop(suspended_versions);
 
         if responses.is_empty() {
             return Err(IpDetectionError::NoServicesAvailable);
@@ -364,6 +405,15 @@ impl IpVersionOps for V6 {
     }
 }
 
+impl VersionSuspension {
+    pub fn new() -> Self {
+        Self {
+            suspended_since: Instant::now(),
+            consecutive_failures: 1,
+        }
+    }
+}
+
 impl std::error::Error for IpDetectionError {}
 
 impl fmt::Display for IpDetectionError {
@@ -399,6 +449,14 @@ impl fmt::Display for IpDetectionError {
                 responses, required
             ),
             Self::NoServicesAvailable => write!(f, "No IP detection services available"),
+            Self::VersionSuspended {
+                version,
+                remaining_secs,
+            } => write!(
+                f,
+                "{:?} detection suspended for {} seconds",
+                version, remaining_secs
+            ),
         }
     }
 }

@@ -1,4 +1,5 @@
 // Standard library
+use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Instant;
@@ -27,11 +28,19 @@ pub struct IpDetection {
     pub network_retry_interval: u64,
 }
 
+/// Suspension state for an IP version
+#[derive(Debug)]
+pub struct VersionSuspension {
+    pub suspended_since: Instant,
+    pub consecutive_failures: u32,
+}
+
 pub struct IpDetector {
     pub config: IpDetection,
     pub rate_limiters: Vec<Arc<dyn RateLimiter>>,
     pub last_check: Arc<RwLock<Instant>>,
     pub client: reqwest::Client,
+    pub suspended_versions: Arc<RwLock<HashMap<IpVersion, VersionSuspension>>>,
 }
 
 /// Service configuration for IP detection
@@ -53,7 +62,7 @@ pub struct V4;
 /// IPv6 version operations
 pub struct V6;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
 pub enum IpVersion {
     V4,
     V6,

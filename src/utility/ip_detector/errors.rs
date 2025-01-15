@@ -1,3 +1,6 @@
+// 3rd party crates
+use reqwest;
+
 // Project imports
 use super::types::IpVersion;
 
@@ -25,4 +28,9 @@ pub enum IpDetectionError {
     ConsensusNotReached { responses: usize, required: u32 },
     /// No services available
     NoServicesAvailable,
+    /// Version suspended
+    VersionSuspended {
+        version: IpVersion,
+        remaining_secs: u64,
+    },
 }

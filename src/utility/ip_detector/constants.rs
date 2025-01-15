@@ -9,6 +9,14 @@ pub const DEFAULT_MAX_REQUESTS_PER_HOUR: u32 = 200;
 pub const DEFAULT_MIN_CONSENSUS: u32 = 4;
 pub const DEFAULT_MAX_NETWORK_RETRY_INTERVAL: u64 = 30;
 
+/// Suspension settings
+/// // Number of consecutive failures before suspension
+pub const MAX_CONSECUTIVE_FAILURES: u32 = 3;
+// Check every 5 minutes if version should be re-enabled
+pub const SUSPENSION_CHECK_INTERVAL_SECS: u64 = 300;
+// Keep version suspended for 1 hour
+pub const SUSPENSION_DURATION_SECS: u64 = 3600;
+
 /// HTTP client settings
 pub const REQUEST_TIMEOUT_SECS: u64 = 5;
 pub const MAX_RETRIES: u32 = 2;
@@ -28,14 +36,19 @@ pub const IPV4_SERVICES: [IpService; 12] = [
         is_primary: true,
     },
     IpService {
-        base_url: "https://api4.my-ip.io",
-        path: "/v2/ip.txt",
+        base_url: "https://ipv4.icanhazip.com",
+        path: "",
+        is_primary: true,
+    },
+    IpService {
+        base_url: "https://ipecho.net",
+        path: "/plain",
         is_primary: true,
     },
     // Secondary services (reliable backups)
     IpService {
-        base_url: "https://ipv4.icanhazip.com",
-        path: "",
+        base_url: "https://api4.my-ip.io",
+        path: "/v2/ip.txt",
         is_primary: false,
     },
     IpService {
@@ -46,11 +59,6 @@ pub const IPV4_SERVICES: [IpService; 12] = [
     IpService {
         base_url: "https://api4.ipaddress.com",
         path: "/myip",
-        is_primary: false,
-    },
-    IpService {
-        base_url: "https://ipecho.net",
-        path: "/plain",
         is_primary: false,
     },
     IpService {
@@ -94,15 +102,15 @@ pub const IPV6_SERVICES: [IpService; 10] = [
         is_primary: true,
     },
     IpService {
-        base_url: "https://api6.my-ip.io",
-        path: "/ip",
+        base_url: "https://ipv6.icanhazip.com",
+        path: "",
         is_primary: true,
     },
     // Secondary services (reliable backups)
     IpService {
-        base_url: "https://ipv6.icanhazip.com",
-        path: "",
-        is_primary: false,
+        base_url: "https://api6.my-ip.io",
+        path: "/ip",
+        is_primary: true,
     },
     IpService {
         base_url: "https://ip6.seeip.org",
