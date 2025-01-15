@@ -1,2 +1,4 @@
-pub mod arvancloud;
 pub mod cloudflare;
+pub mod traits;
+
+pub use traits::DnsProvider;

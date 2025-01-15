@@ -1,24 +1,58 @@
+//! Fariba DDNS Client
+//! 
+//! A flexible Dynamic DNS client that supports multiple DNS providers.
+//! This client automatically updates DNS records when your IP address changes,
+//! making it ideal for homelab and self-hosted services.
+//!
+//! # Features
+//!
+//! - Multiple DNS provider support (Cloudflare, ArvanCloud, etc.)
+//! - Automatic IP detection using various services
+//! - Configurable update intervals
+//! - Detailed logging and error reporting
+//!
+//! # Example
+//!
+//! ```no_run
+//! # async fn run() {
+//! use fariba_ddns::ConfigManager;
+//! 
+//! let config = ConfigManager::from_file(".settings.toml").await?;
+//! fariba_ddns::run(config).await?;
+//! # }
+//! ```
+
 // Standard library
-use std::error::Error;
-use std::net::Ipv4Addr;
 use std::sync::Arc;
-use std::time::Duration;
 
 // 3rd party crates
-use tokio::sync::RwLockReadGuard;
-use tracing::{debug, error, info, warn};
+use tokio::signal::ctrl_c;
+use tokio::sync::broadcast;
+use tracing::{error, info};
 use tracing_subscriber::{filter::LevelFilter, EnvFilter};
 
 // Project modules
+mod functions;
 mod providers;
 mod settings;
+mod utility;
 
 // Project imports
-use crate::providers::cloudflare::errors::CloudflareError;
-use crate::providers::cloudflare::functions::{get_cloudflares, process_updates};
-use crate::providers::cloudflare::structs::Cloudflare;
-use crate::settings::structs::{ConfigManager, Settings};
+use crate::functions::run;
+use crate::settings::types::ConfigManager;
 
+/// Main entry point for the DDNS client.
+/// This application monitors public IP addresses and updates DNS records
+/// when changes are detected. It supports both IPv4 and IPv6 addresses.
+///
+/// Features:
+/// - Automatic IP change detection with consensus validation
+/// - Support for multiple DNS providers
+/// - Concurrent DNS updates
+/// - Rate limiting to respect API limits
+/// - Configurable update intervals
+/// - Network connectivity monitoring
+/// - Detailed logging
 #[tokio::main]
 async fn main() {
     // loads the .env file from the current directory or parents.
@@ -50,50 +84,24 @@ async fn main() {
 
     info!("⚙️ Settings have been loaded.");
 
-    // Run the main application logic
-    run(config).await.expect("Failed to run the application");
-}
+    // Create a broadcast channel for shutdown signal
+    let (shutdown_tx, _) = broadcast::channel(1);
+    let shutdown_tx_clone = shutdown_tx.clone();
 
-async fn run(config: Arc<ConfigManager>) -> Result<(), Box<dyn Error>> {
-    let update_interval: u64 = config.get_update_interval().await;
-
-    info!(
-        "🕰️ Updating IPv4 (A) records every {} seconds",
-        update_interval
-    );
-
-    // Fetch settings and create Cloudflare instances
-    let cloudflares: Vec<Cloudflare> = get_cloudflares(config).await?;
-
-    let mut previous_ip: Option<Ipv4Addr> = None;
-
-    loop {
-        // Get the public IPv4 address
-        match get_public_ip_v4().await {
-            Some(ip) => {
-                if Some(ip) != previous_ip {
-                    info!("Public 🧩 IPv4 detected: {}", ip);
-                    previous_ip = Some(ip);
-
-                    // Process updates
-                    if let Err(e) = process_updates(&cloudflares, &ip).await {
-                        error!("Error updating  records: {}", e);
-                    }
-                } else {
-                    debug!("🧩 IPv4 address unchanged");
-                }
-            }
-            None => {
-                warn!("🧩 IPv4 not detected");
-            }
+    // Handle Ctrl+C
+    tokio::spawn(async move {
+        if let Err(e) = ctrl_c().await {
+            error!("Failed to listen for Ctrl+C: {}", e);
+            return;
         }
+        info!("Received shutdown signal, initiating graceful shutdown...");
+        let _ = shutdown_tx_clone.send(());
+    });
 
-        // Sleep for the update interval duration
-        tokio::time::sleep(Duration::from_secs(update_interval)).await;
+    // Run the main application logic with shutdown signal
+    if let Err(e) = run(config, shutdown_tx.subscribe()).await {
+        error!("Application error: {}", e);
     }
-}
 
-async fn get_public_ip_v4() -> Option<Ipv4Addr> {
-    // attempt to get an IP address.
-    public_ip::addr_v4().await
+    info!("Shutdown complete.");
 }
