@@ -14,64 +14,54 @@ pub const REQUEST_TIMEOUT_SECS: u64 = 5;
 pub const MAX_RETRIES: u32 = 2;
 pub const RETRY_DELAY_MS: u64 = 500;
 
-/// IP services for detecting public IP addresses
-pub const IP_SERVICES: [IpService; 8] = [
-    // Primary services (more reliable)
+/// IPv4 detection services
+pub const IPV4_SERVICES: [IpService; 4] = [
+    // Primary services
     IpService {
-        base_url: "https://api64.ipify.org",
-        v4_path: "?format=text",
-        v6_path: "?format=text",
-        supports_v6: true,
+        base_url: "https://api.ipify.org",
+        path: "?format=text",
         is_primary: true,
     },
     IpService {
         base_url: "https://v4.ident.me",
-        v4_path: "",
-        v6_path: "",
-        supports_v6: false,
+        path: "",
+        is_primary: true,
+    },
+    IpService {
+        base_url: "https://api4.my-ip.io",
+        path: "/v2/ip.txt",
+        is_primary: true,
+    },
+    // Secondary services
+    IpService {
+        base_url: "https://ipv4.icanhazip.com",
+        path: "",
+        is_primary: false,
+    },
+];
+
+/// IPv6 detection services
+pub const IPV6_SERVICES: [IpService; 4] = [
+    // Primary services
+    IpService {
+        base_url: "https://api6.ipify.org",
+        path: "?format=text",
         is_primary: true,
     },
     IpService {
         base_url: "https://v6.ident.me",
-        v4_path: "",
-        v6_path: "",
-        supports_v6: true,
+        path: "",
         is_primary: true,
     },
-    // Secondary services (backup)
     IpService {
         base_url: "https://api6.my-ip.io",
-        v4_path: "/ip",
-        v6_path: "/ip",
-        supports_v6: true,
-        is_primary: false,
+        path: "/ip",
+        is_primary: true,
     },
+    // Secondary services
     IpService {
         base_url: "https://ipv6.icanhazip.com",
-        v4_path: "",
-        v6_path: "",
-        supports_v6: true,
-        is_primary: false,
-    },
-    IpService {
-        base_url: "https://ipv4.icanhazip.com",
-        v4_path: "",
-        v6_path: "",
-        supports_v6: false,
-        is_primary: false,
-    },
-    IpService {
-        base_url: "https://v4.ipv6-test.com",
-        v4_path: "/api/myip.php",
-        v6_path: "",
-        supports_v6: false,
-        is_primary: false,
-    },
-    IpService {
-        base_url: "https://v6.ipv6-test.com",
-        v4_path: "",
-        v6_path: "/api/myip.php",
-        supports_v6: true,
+        path: "",
         is_primary: false,
     },
 ];

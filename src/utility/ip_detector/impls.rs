@@ -15,10 +15,11 @@ use crate::utility::rate_limiter::types::{RateLimitConfig, TokenBucketRateLimite
 
 use super::constants::{
     DEFAULT_MAX_NETWORK_RETRY_INTERVAL, DEFAULT_MAX_REQUESTS_PER_HOUR, DEFAULT_MIN_CONSENSUS,
-    IP_SERVICES, MAX_RETRIES, REQUEST_TIMEOUT_SECS, RETRY_DELAY_MS,
+    IPV4_SERVICES, IPV6_SERVICES, MAX_RETRIES, REQUEST_TIMEOUT_SECS, RETRY_DELAY_MS,
 };
 use super::errors::IpDetectionError;
-use super::types::{IpDetection, IpDetector, IpResponse, IpService, IpVersion};
+use super::traits::IpVersionOps;
+use super::types::{IpDetection, IpDetector, IpResponse, IpService, IpVersion, V4, V6};
 
 impl Default for IpDetection {
     fn default() -> Self {
@@ -32,15 +33,20 @@ impl Default for IpDetection {
 
 impl IpDetector {
     pub fn new(config: IpDetection) -> Self {
-        let rate_limiters = IP_SERVICES
-            .iter()
-            .map(|_| {
-                Arc::new(TokenBucketRateLimiter::new(RateLimitConfig {
-                    max_requests: config.max_requests_per_hour,
-                    window_secs: 3600, // 1 hour
-                })) as Arc<dyn RateLimiter>
-            })
-            .collect();
+        // Create rate limiters for both IPv4 and IPv6 services
+        let mut rate_limiters = Vec::new();
+        rate_limiters.extend(V4::get_services().iter().map(|_| {
+            Arc::new(TokenBucketRateLimiter::new(RateLimitConfig {
+                max_requests: config.max_requests_per_hour,
+                window_secs: 3600, // 1 hour
+            })) as Arc<dyn RateLimiter>
+        }));
+        rate_limiters.extend(V6::get_services().iter().map(|_| {
+            Arc::new(TokenBucketRateLimiter::new(RateLimitConfig {
+                max_requests: config.max_requests_per_hour,
+                window_secs: 3600, // 1 hour
+            })) as Arc<dyn RateLimiter>
+        }));
 
         Self {
             config,
@@ -56,26 +62,34 @@ impl IpDetector {
 
     /// Detects the current public IP address with consensus validation
     pub async fn detect_ip(&self, ip_version: IpVersion) -> Result<IpAddr, IpDetectionError> {
+        match ip_version {
+            IpVersion::V4 => self.detect_ip_for_version::<V4>().await,
+            IpVersion::V6 => self.detect_ip_for_version::<V6>().await,
+        }
+    }
+
+    /// Generic IP detection for a specific version
+    async fn detect_ip_for_version<V: IpVersionOps>(&self) -> Result<IpAddr, IpDetectionError> {
         let mut responses = Vec::new();
         let mut errors = Vec::new();
-        let mut available_services = 0;
+        let services = V::get_services();
+        let offset = V::rate_limiter_offset();
 
-        for (idx, service) in IP_SERVICES.iter().enumerate() {
-            // Skip IPv6 check for services that don't support it
-            if matches!(ip_version, IpVersion::V6) && !service.supports_v6 {
-                continue;
-            }
-            available_services += 1;
+        for (idx, service) in services.iter().enumerate() {
+            let rate_limiter_idx = idx + offset;
 
             // Check rate limit
-            if !self.rate_limiters[idx].acquire().await {
+            if !self.rate_limiters[rate_limiter_idx].acquire().await {
                 errors.push(IpDetectionError::RateLimitExceeded {
                     service: service.base_url.to_string(),
                 });
                 continue;
             }
 
-            match self.query_ip_service_with_retry(service, ip_version).await {
+            match self
+                .query_ip_service_with_retry(service, V::version())
+                .await
+            {
                 Ok(ip) => {
                     debug!(
                         "Successfully got IP {} from service {}",
@@ -92,10 +106,10 @@ impl IpDetector {
                 }
             }
 
-            self.rate_limiters[idx].release().await;
+            self.rate_limiters[rate_limiter_idx].release().await;
         }
 
-        if available_services == 0 {
+        if responses.is_empty() {
             return Err(IpDetectionError::NoServicesAvailable);
         }
 
@@ -151,15 +165,29 @@ impl IpDetector {
 
     /// Checks network connectivity with retries
     pub async fn check_network(&self) -> bool {
-        for (idx, service) in IP_SERVICES.iter().enumerate() {
-            if !self.rate_limiters[idx].acquire().await {
+        // Try IPv4 services first
+        if self.check_network_for_version::<V4>().await {
+            return true;
+        }
+        // Fall back to IPv6 services
+        self.check_network_for_version::<V6>().await
+    }
+
+    /// Generic network check for a specific version
+    async fn check_network_for_version<V: IpVersionOps>(&self) -> bool {
+        let services = V::get_services();
+        let offset = V::rate_limiter_offset();
+
+        for (idx, service) in services.iter().enumerate() {
+            let rate_limiter_idx = idx + offset;
+            if !self.rate_limiters[rate_limiter_idx].acquire().await {
                 continue;
             }
 
             for retry in 0..MAX_RETRIES {
                 match self.client.get(service.base_url).send().await {
                     Ok(_) => {
-                        self.rate_limiters[idx].release().await;
+                        self.rate_limiters[rate_limiter_idx].release().await;
                         return true;
                     }
                     Err(e) => {
@@ -178,7 +206,7 @@ impl IpDetector {
                     }
                 }
             }
-            self.rate_limiters[idx].release().await;
+            self.rate_limiters[rate_limiter_idx].release().await;
         }
         false
     }
@@ -219,12 +247,7 @@ impl IpDetector {
         service: &IpService,
         ip_version: IpVersion,
     ) -> Result<IpAddr, IpDetectionError> {
-        let path = match ip_version {
-            IpVersion::V4 => service.v4_path,
-            IpVersion::V6 => service.v6_path,
-        };
-
-        let url = format!("{}{}", service.base_url, path);
+        let url = format!("{}{}", service.base_url, service.path);
         let response =
             self.client
                 .get(&url)
@@ -285,6 +308,30 @@ impl IpDetector {
                 },
             }),
         }
+    }
+}
+
+impl IpVersionOps for V4 {
+    fn get_services() -> &'static [IpService] {
+        &IPV4_SERVICES
+    }
+    fn rate_limiter_offset() -> usize {
+        0
+    }
+    fn version() -> IpVersion {
+        IpVersion::V4
+    }
+}
+
+impl IpVersionOps for V6 {
+    fn get_services() -> &'static [IpService] {
+        &IPV6_SERVICES
+    }
+    fn rate_limiter_offset() -> usize {
+        IPV4_SERVICES.len()
+    }
+    fn version() -> IpVersion {
+        IpVersion::V6
     }
 }
 

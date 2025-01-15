@@ -1,5 +1,5 @@
-use std::net::IpAddr;
 // Standard library
+use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -37,9 +37,7 @@ pub struct IpDetector {
 /// Service configuration for IP detection
 pub struct IpService {
     pub base_url: &'static str,
-    pub v4_path: &'static str,
-    pub v6_path: &'static str,
-    pub supports_v6: bool,
+    pub path: &'static str,
     pub is_primary: bool,
 }
 
@@ -48,6 +46,12 @@ pub struct IpResponse {
     pub ip: IpAddr,
     pub is_primary: bool,
 }
+
+/// IPv4 version operations
+pub struct V4;
+
+/// IPv6 version operations
+pub struct V6;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum IpVersion {
