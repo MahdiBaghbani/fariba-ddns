@@ -74,8 +74,11 @@ impl IpDetector {
         let mut errors = Vec::new();
         let services = V::get_services();
         let offset = V::rate_limiter_offset();
+        let min_consensus = self.config.min_consensus as usize;
 
-        for (idx, service) in services.iter().enumerate() {
+        // Try primary services first
+        let primary_services: Vec<_> = services.iter().filter(|s| s.is_primary).collect();
+        for (idx, service) in primary_services.iter().enumerate() {
             let rate_limiter_idx = idx + offset;
 
             // Check rate limit
@@ -97,8 +100,56 @@ impl IpDetector {
                     );
                     responses.push(IpResponse {
                         ip,
-                        is_primary: service.is_primary,
+                        is_primary: true,
                     });
+
+                    // Check if we have consensus from primary services
+                    if let Ok(consensus_ip) = self.check_consensus(&responses, min_consensus) {
+                        self.rate_limiters[rate_limiter_idx].release().await;
+                        return Ok(consensus_ip);
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to query IP service {}: {}", service.base_url, e);
+                    errors.push(e);
+                }
+            }
+
+            self.rate_limiters[rate_limiter_idx].release().await;
+        }
+
+        // If no consensus from primary services, try secondary services
+        let secondary_services: Vec<_> = services.iter().filter(|s| !s.is_primary).collect();
+        for (idx, service) in secondary_services.iter().enumerate() {
+            let rate_limiter_idx = idx + offset + primary_services.len();
+
+            // Check rate limit
+            if !self.rate_limiters[rate_limiter_idx].acquire().await {
+                errors.push(IpDetectionError::RateLimitExceeded {
+                    service: service.base_url.to_string(),
+                });
+                continue;
+            }
+
+            match self
+                .query_ip_service_with_retry(service, V::version())
+                .await
+            {
+                Ok(ip) => {
+                    debug!(
+                        "Successfully got IP {} from service {}",
+                        ip, service.base_url
+                    );
+                    responses.push(IpResponse {
+                        ip,
+                        is_primary: false,
+                    });
+
+                    // Check if we have consensus with all responses
+                    if let Ok(consensus_ip) = self.check_consensus(&responses, min_consensus) {
+                        self.rate_limiters[rate_limiter_idx].release().await;
+                        return Ok(consensus_ip);
+                    }
                 }
                 Err(e) => {
                     error!("Failed to query IP service {}: {}", service.base_url, e);
@@ -113,54 +164,32 @@ impl IpDetector {
             return Err(IpDetectionError::NoServicesAvailable);
         }
 
-        self.process_responses(responses, self.config.min_consensus)
+        // If we get here, we don't have consensus
+        Err(IpDetectionError::ConsensusNotReached {
+            responses: responses.len(),
+            required: self.config.min_consensus,
+        })
     }
 
-    /// Process responses and determine consensus
-    fn process_responses(
+    /// Check if we have consensus among the responses
+    fn check_consensus(
         &self,
-        responses: Vec<IpResponse>,
-        min_consensus: u32,
+        responses: &[IpResponse],
+        min_consensus: usize,
     ) -> Result<IpAddr, IpDetectionError> {
-        // Only filter for primary services if we have enough primary responses for consensus
-        let primary_responses: Vec<_> = responses.iter().filter(|r| r.is_primary).collect();
-
-        // Use all responses if we don't have enough primary responses
-        let filtered_responses = if primary_responses.len() >= min_consensus as usize {
-            primary_responses
-        } else {
-            responses.iter().collect()
-        };
-
-        // Check if we have enough responses for consensus
-        let response_count = filtered_responses.len();
-        if response_count < min_consensus as usize {
-            return Err(IpDetectionError::ConsensusNotReached {
-                responses: response_count,
-                required: min_consensus,
-            });
-        }
-
-        // Find the most common IP address
         let mut ip_counts = HashMap::new();
-        for response in filtered_responses {
+        for response in responses {
             *ip_counts.entry(response.ip).or_insert(0) += 1;
-        }
 
-        ip_counts
-            .into_iter()
-            .max_by_key(|(_, count)| *count)
-            .and_then(|(ip, count)| {
-                if count >= min_consensus {
-                    Some(ip)
-                } else {
-                    None
-                }
-            })
-            .ok_or(IpDetectionError::ConsensusNotReached {
-                responses: response_count,
-                required: min_consensus,
-            })
+            // If any IP has reached the minimum consensus, return it
+            if ip_counts[&response.ip] >= min_consensus {
+                return Ok(response.ip);
+            }
+        }
+        Err(IpDetectionError::ConsensusNotReached {
+            responses: responses.len(),
+            required: self.config.min_consensus,
+        })
     }
 
     /// Checks network connectivity with retries
