@@ -1,6 +1,6 @@
 // Standard library
 use std::error::Error;
-use std::net::Ipv4Addr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -23,7 +23,7 @@ use crate::settings::types::{ConfigManager, Settings};
 /// Main entry point for the DDNS client.
 /// This application monitors public IP addresses and updates DNS records
 /// when changes are detected. It supports both IPv4 and IPv6 addresses.
-/// 
+///
 /// Features:
 /// - Automatic IP change detection
 /// - Support for multiple DNS providers
@@ -63,22 +63,18 @@ async fn main() {
     info!("⚙️ Settings have been loaded.");
 
     // Run the main application logic
-    run(config)
-        .await
-        .expect("Failed to run the application");
+    run(config).await.expect("Failed to run the application");
 }
 
 /// Main application loop that handles IP monitoring and DNS updates.
-/// 
+///
 /// This function:
 /// - Monitors public IPv4 and IPv6 addresses
 /// - Detects IP address changes
 /// - Updates DNS records when changes occur
 /// - Handles errors and retries
 /// - Respects configured update intervals
-async fn run(
-    config: Arc<ConfigManager>,
-) -> Result<(), Box<dyn Error>> {
+async fn run(config: Arc<ConfigManager>) -> Result<(), Box<dyn Error>> {
     let update_interval: u64 = config.get_update_interval().await;
 
     info!("🕰️ Updating DNS records every {} seconds", update_interval);
@@ -87,7 +83,7 @@ async fn run(
     let cloudflares: Vec<Cloudflare> = get_cloudflares(config).await?;
 
     let mut previous_ipv4: Option<Ipv4Addr> = None;
-    let mut previous_ipv6: Option<std::net::Ipv6Addr> = None;
+    let mut previous_ipv6: Option<Ipv6Addr> = None;
 
     loop {
         // Get the public IPv4 address
@@ -98,7 +94,7 @@ async fn run(
                     previous_ipv4 = Some(ip);
 
                     // Process updates
-                    if let Err(e) = process_updates(&cloudflares, &ip).await {
+                    if let Err(e) = process_updates(&cloudflares, &IpAddr::V4(ip)).await {
                         error!("Error updating IPv4 records: {}", e);
                     }
                 } else {
@@ -118,12 +114,8 @@ async fn run(
                     previous_ipv6 = Some(ip);
 
                     // Process updates
-                    for cloudflare in &cloudflares {
-                        if cloudflare.config.enable_ipv6 {
-                            if let Err(e) = cloudflare.update_dns_records_v6(&ip).await {
-                                error!("Error updating IPv6 records: {}", e);
-                            }
-                        }
+                    if let Err(e) = process_updates(&cloudflares, &IpAddr::V6(ip)).await {
+                        error!("Error updating IPv6 records: {}", e);
                     }
                 } else {
                     debug!("🧩 IPv6 address unchanged");
@@ -147,6 +139,6 @@ async fn get_public_ip_v4() -> Option<Ipv4Addr> {
 
 /// Attempts to get the current public IPv6 address.
 /// Uses the public_ip crate to query various IP detection services.
-async fn get_public_ip_v6() -> Option<std::net::Ipv6Addr> {
+async fn get_public_ip_v6() -> Option<Ipv6Addr> {
     public_ip::addr_v6().await
 }

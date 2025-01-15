@@ -1,6 +1,6 @@
 // Standard library
 use std::error::Error;
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
 
 // 3rd party crates
@@ -88,7 +88,7 @@ pub async fn get_cloudflares(
 /// using a FuturesUnordered to manage concurrent updates efficiently.
 pub async fn process_updates(
     cloudflares: &[Cloudflare],
-    ip: &Ipv4Addr,
+    ip: &IpAddr,
 ) -> Result<(), Box<dyn Error>> {
     // Create a FuturesUnordered to hold our concurrent tasks.
     let mut futures = FuturesUnordered::new();
@@ -100,9 +100,11 @@ pub async fn process_updates(
             "Starting DNS update process"
         );
         // Push the future into the FuturesUnordered stream.
+        let cloudflare = cloudflare.clone();
+        let ip = *ip;
         futures.push(async move {
             // Call the method to update DNS records.
-            cloudflare.update_dns_records(ip).await
+            cloudflare.update_dns_records_ip(&ip).await
         });
     }
 
@@ -123,15 +125,16 @@ pub async fn process_updates(
 }
 
 /// Fetches DNS records for a specific domain.
-/// This function retrieves the current A records for a domain from Cloudflare's API.
+/// This function retrieves the current A or AAAA records for a domain from Cloudflare's API.
 /// It includes error handling for various API response scenarios.
 pub(super) async fn fetch_dns_records(
     cloudflare: &Cloudflare,
     domain: &str,
+    record_type: &str,
 ) -> Result<DnsResponse, CloudflareError> {
     let url = format!(
-        "{}/zones/{}/dns_records?type=A&name={}",
-        CLOUDFLARE_API_BASE, cloudflare.config.zone_id, domain
+        "{}/zones/{}/dns_records?type={}&name={}",
+        CLOUDFLARE_API_BASE, cloudflare.config.zone_id, record_type, domain
     );
 
     debug!(
@@ -193,7 +196,7 @@ pub(super) async fn fetch_dns_records(
 /// - Provides detailed logging of the update process
 pub async fn update_dns_records(
     cloudflare: &Cloudflare,
-    ip: &Ipv4Addr,
+    ip: &IpAddr,
 ) -> Result<(), CloudflareError> {
     // First verify the zone is active
     let zone_status = verify_zone_status(cloudflare).await?;
@@ -208,6 +211,16 @@ pub async fn update_dns_records(
     let mut update_count = 0;
     let mut retry_count = 0;
     const MAX_RETRIES: u32 = 3;
+
+    // Skip IPv6 updates if not enabled
+    if matches!(ip, IpAddr::V6(_)) && !cloudflare.config.enable_ipv6 {
+        return Ok(());
+    }
+
+    let record_type = match ip {
+        IpAddr::V4(_) => "A",
+        IpAddr::V6(_) => "AAAA",
+    };
 
     for subdomain in &cloudflare.config.subdomains {
         // Construct the full domain name for logging
@@ -224,7 +237,7 @@ pub async fn update_dns_records(
         );
 
         'retry: loop {
-            match process_domain_record(cloudflare, &full_domain, ip).await {
+            match process_domain_record(cloudflare, &full_domain, ip, record_type).await {
                 Ok(_) => {
                     update_count += 1;
                     break 'retry;
@@ -282,10 +295,11 @@ pub async fn update_dns_records(
 async fn process_domain_record(
     cloudflare: &Cloudflare,
     full_domain: &str,
-    ip: &Ipv4Addr,
+    ip: &IpAddr,
+    record_type: &str,
 ) -> Result<(), CloudflareError> {
     let records = cloudflare
-        .with_rate_limit(fetch_dns_records(cloudflare, full_domain))
+        .with_rate_limit(fetch_dns_records(cloudflare, full_domain, record_type))
         .await?;
 
     if records.result.is_empty() {
@@ -295,7 +309,7 @@ async fn process_domain_record(
             "No DNS records found, attempting to create"
         );
         return cloudflare
-            .with_rate_limit(create_dns_record(cloudflare, full_domain, ip))
+            .with_rate_limit(create_dns_record(cloudflare, full_domain, ip, record_type))
             .await;
     }
 
@@ -310,7 +324,7 @@ async fn process_domain_record(
             );
 
             match cloudflare
-                .with_rate_limit(update_record(cloudflare, &record.id, ip))
+                .with_rate_limit(update_record(cloudflare, &record.id, ip, record_type))
                 .await
             {
                 Ok(_) => {
@@ -345,12 +359,13 @@ async fn process_domain_record(
 }
 
 /// Creates a new DNS record with the specified IP address.
-/// This function handles the creation of new A records in Cloudflare,
+/// This function handles the creation of new A or AAAA records in Cloudflare,
 /// including proper error handling and validation.
 async fn create_dns_record(
     cloudflare: &Cloudflare,
     domain: &str,
-    ip: &Ipv4Addr,
+    ip: &IpAddr,
+    record_type: &str,
 ) -> Result<(), CloudflareError> {
     info!(
         zone = %cloudflare.config.name,
@@ -368,7 +383,7 @@ async fn create_dns_record(
         .client
         .post(&url)
         .json(&json!({
-            "type": "A",
+            "type": record_type,
             "name": domain,
             "content": ip.to_string(),
             "proxied": true,
@@ -410,12 +425,13 @@ async fn create_dns_record(
 }
 
 /// Updates a specific DNS record with a new IP address.
-/// This function updates an existing A record with a new IP address,
+/// This function updates an existing A or AAAA record with a new IP address,
 /// handling all necessary API interactions and error cases.
 async fn update_record(
     cloudflare: &Cloudflare,
     record_id: &str,
-    ip: &Ipv4Addr,
+    ip: &IpAddr,
+    record_type: &str,
 ) -> Result<(), CloudflareError> {
     let url = format!(
         "{}/zones/{}/dns_records/{}",
@@ -426,6 +442,7 @@ async fn update_record(
         .client
         .patch(&url)
         .json(&json!({
+            "type": record_type,
             "content": ip.to_string(),
             "proxied": true
         }))
@@ -494,322 +511,4 @@ async fn verify_zone_status(cloudflare: &Cloudflare) -> Result<ZoneResponse, Clo
             zone: cloudflare.config.name.clone(),
             message: format!("Failed to parse zone response: {}", e),
         })
-}
-
-/// Updates DNS records for all configured subdomains with IPv6.
-/// This function parallels the IPv4 update process but for AAAA records,
-/// managing IPv6 addresses for configured domains.
-pub async fn update_dns_records_v6(
-    cloudflare: &Cloudflare,
-    ip: &Ipv6Addr,
-) -> Result<(), CloudflareError> {
-    // First verify the zone is active
-    let zone_status = verify_zone_status(cloudflare).await?;
-    if !zone_status.result.status.eq_ignore_ascii_case("active") {
-        return Err(CloudflareError::InactiveZone(
-            cloudflare.config.name.clone(),
-            zone_status.result.status,
-        ));
-    }
-
-    let mut last_error: Option<CloudflareError> = None;
-    let mut update_count = 0;
-    let mut retry_count = 0;
-    const MAX_RETRIES: u32 = 3;
-
-    for subdomain in &cloudflare.config.subdomains {
-        // Construct the full domain name for logging
-        let full_domain = if subdomain.name.is_empty() {
-            cloudflare.config.name.clone()
-        } else {
-            format!("{}.{}", subdomain.name, cloudflare.config.name)
-        };
-
-        info!(
-            zone = %cloudflare.config.name,
-            domain = %full_domain,
-            "Processing IPv6 DNS records"
-        );
-
-        'retry: loop {
-            match process_domain_record_v6(cloudflare, &full_domain, ip).await {
-                Ok(_) => {
-                    update_count += 1;
-                    break 'retry;
-                }
-                Err(e) => {
-                    if retry_count < MAX_RETRIES {
-                        retry_count += 1;
-                        warn!(
-                            zone = %cloudflare.config.name,
-                            domain = %full_domain,
-                            error = %e,
-                            retry = retry_count,
-                            "Retrying after error"
-                        );
-                        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                        continue;
-                    }
-                    error!(
-                        zone = %cloudflare.config.name,
-                        domain = %full_domain,
-                        error = %e,
-                        "Failed after {} retries",
-                        MAX_RETRIES
-                    );
-                    last_error = Some(e);
-                    break 'retry;
-                }
-            }
-        }
-    }
-
-    // Log summary
-    if update_count > 0 {
-        info!(
-            zone = %cloudflare.config.name,
-            count = update_count,
-            "Successfully processed {} IPv6 DNS records",
-            update_count
-        );
-    }
-
-    if let Some(error) = last_error {
-        Err(error)
-    } else {
-        Ok(())
-    }
-}
-
-/// Process a single domain record for IPv6 - fetch, create if missing, or update if needed
-async fn process_domain_record_v6(
-    cloudflare: &Cloudflare,
-    full_domain: &str,
-    ip: &Ipv6Addr,
-) -> Result<(), CloudflareError> {
-    let records = cloudflare
-        .with_rate_limit(fetch_dns_records_v6(cloudflare, full_domain))
-        .await?;
-
-    if records.result.is_empty() {
-        warn!(
-            zone = %cloudflare.config.name,
-            domain = %full_domain,
-            "No AAAA records found, attempting to create"
-        );
-        return cloudflare
-            .with_rate_limit(create_dns_record_v6(cloudflare, full_domain, ip))
-            .await;
-    }
-
-    for record in records.result {
-        if record.content != ip.to_string() {
-            info!(
-                zone = %cloudflare.config.name,
-                domain = %full_domain,
-                "Updating IPv6 DNS record from {} to {}",
-                record.content,
-                ip
-            );
-
-            match cloudflare
-                .with_rate_limit(update_record_v6(cloudflare, &record.id, ip))
-                .await
-            {
-                Ok(_) => {
-                    info!(
-                        zone = %cloudflare.config.name,
-                        domain = %full_domain,
-                        "Successfully updated IPv6 DNS record to {}",
-                        ip
-                    );
-                }
-                Err(e) => {
-                    error!(
-                        zone = %cloudflare.config.name,
-                        domain = %full_domain,
-                        "Failed to update IPv6 DNS record: {}",
-                        e
-                    );
-                    return Err(e);
-                }
-            }
-        } else {
-            debug!(
-                zone = %cloudflare.config.name,
-                domain = %full_domain,
-                "IPv6 DNS record already set to {}",
-                ip
-            );
-        }
-    }
-
-    Ok(())
-}
-
-/// Fetches AAAA DNS records for a specific domain.
-async fn fetch_dns_records_v6(
-    cloudflare: &Cloudflare,
-    domain: &str,
-) -> Result<DnsResponse, CloudflareError> {
-    let url = format!(
-        "{}/zones/{}/dns_records?type=AAAA&name={}",
-        CLOUDFLARE_API_BASE, cloudflare.config.zone_id, domain
-    );
-
-    debug!(
-        zone = %cloudflare.config.name,
-        domain = %domain,
-        url = %url,
-        "Sending IPv6 DNS records request"
-    );
-
-    let response = tokio::time::timeout(
-        tokio::time::Duration::from_secs(10),
-        cloudflare.client.get(&url).send(),
-    )
-    .await
-    .map_err(|_| CloudflareError::Timeout {
-        zone: cloudflare.config.name.clone(),
-        message: "IPv6 DNS record fetch request timed out".to_string(),
-    })??;
-
-    let status = response.status();
-    match status {
-        StatusCode::OK => {
-            let response_text =
-                response
-                    .text()
-                    .await
-                    .map_err(|e| CloudflareError::FetchFailed {
-                        zone: cloudflare.config.name.clone(),
-                        message: format!("Failed to read response body: {}", e),
-                    })?;
-
-            debug!(
-                zone = %cloudflare.config.name,
-                domain = %domain,
-                response = %response_text,
-                "Received IPv6 DNS records response"
-            );
-
-            serde_json::from_str(&response_text).map_err(|e| CloudflareError::FetchFailed {
-                zone: cloudflare.config.name.clone(),
-                message: format!("Failed to parse response: {}", e),
-            })
-        }
-        StatusCode::UNAUTHORIZED => Err(CloudflareError::InvalidApiToken(
-            cloudflare.config.name.clone(),
-        )),
-        _ => Err(CloudflareError::FetchFailed {
-            zone: cloudflare.config.name.clone(),
-            message: format!("HTTP {}", status),
-        }),
-    }
-}
-
-/// Creates a new IPv6 DNS record
-async fn create_dns_record_v6(
-    cloudflare: &Cloudflare,
-    domain: &str,
-    ip: &Ipv6Addr,
-) -> Result<(), CloudflareError> {
-    info!(
-        zone = %cloudflare.config.name,
-        domain = %domain,
-        "Creating new IPv6 DNS record with IP {}",
-        ip
-    );
-
-    let url = format!(
-        "{}/zones/{}/dns_records",
-        CLOUDFLARE_API_BASE, cloudflare.config.zone_id
-    );
-
-    let response = cloudflare
-        .client
-        .post(&url)
-        .json(&json!({
-            "type": "AAAA",
-            "name": domain,
-            "content": ip.to_string(),
-            "proxied": true,
-            "ttl": 1, // Auto TTL
-        }))
-        .send()
-        .await
-        .map_err(|e| CloudflareError::CreateFailed {
-            zone: cloudflare.config.name.clone(),
-            domain: domain.to_string(),
-            message: format!("Failed to send create request: {}", e),
-        })?;
-
-    let status = response.status();
-    if status == StatusCode::UNAUTHORIZED {
-        return Err(CloudflareError::InvalidApiToken(
-            cloudflare.config.name.clone(),
-        ));
-    }
-
-    if !status.is_success() {
-        let error_body = response
-            .text()
-            .await
-            .unwrap_or_else(|_| "Unknown error".to_string());
-        return Err(CloudflareError::CreateFailed {
-            zone: cloudflare.config.name.clone(),
-            domain: domain.to_string(),
-            message: format!("HTTP {} - {}", status, error_body),
-        });
-    }
-
-    info!(
-        zone = %cloudflare.config.name,
-        domain = %domain,
-        "Successfully created IPv6 DNS record"
-    );
-    Ok(())
-}
-
-/// Updates a specific IPv6 DNS record
-async fn update_record_v6(
-    cloudflare: &Cloudflare,
-    record_id: &str,
-    ip: &Ipv6Addr,
-) -> Result<(), CloudflareError> {
-    let url = format!(
-        "{}/zones/{}/dns_records/{}",
-        CLOUDFLARE_API_BASE, cloudflare.config.zone_id, record_id
-    );
-
-    let response = cloudflare
-        .client
-        .patch(&url)
-        .json(&json!({
-            "type": "AAAA",
-            "content": ip.to_string(),
-            "proxied": true
-        }))
-        .send()
-        .await
-        .map_err(|e| CloudflareError::UpdateFailed {
-            zone: cloudflare.config.name.clone(),
-            message: format!("Failed to send update request: {}", e),
-        })?;
-
-    let status = response.status();
-    if status == StatusCode::UNAUTHORIZED {
-        return Err(CloudflareError::InvalidApiToken(
-            cloudflare.config.name.clone(),
-        ));
-    }
-
-    if !status.is_success() {
-        return Err(CloudflareError::UpdateFailed {
-            zone: cloudflare.config.name.clone(),
-            message: format!("HTTP {}", status),
-        });
-    }
-
-    Ok(())
 }

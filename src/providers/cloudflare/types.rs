@@ -1,7 +1,7 @@
 // Standard library
 use std::fmt;
 use std::future::Future;
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
 
 // 3rd party crates
@@ -15,7 +15,7 @@ use crate::utility::rate_limiter::traits::RateLimiter;
 use crate::utility::rate_limiter::types::{RateLimitConfig, TokenBucketRateLimiter};
 
 use super::errors::CloudflareError;
-use super::functions::create_reqwest_client;
+use super::functions::{create_reqwest_client, update_dns_records};
 
 /// Represents a client for interacting with the Cloudflare API.
 /// This client handles DNS record management operations including:
@@ -165,17 +165,15 @@ impl DnsProvider for Cloudflare {
         Self::new(config)
     }
 
-    async fn update_dns_records(&self, ip: &Ipv4Addr) -> Result<(), Self::Error> {
-        use super::functions::update_dns_records;
-        update_dns_records(self, ip).await
+    async fn update_dns_records_v4(&self, ip: &Ipv4Addr) -> Result<(), Self::Error> {
+        update_dns_records(self, &IpAddr::V4(*ip)).await
     }
 
     async fn update_dns_records_v6(&self, ip: &Ipv6Addr) -> Result<(), Self::Error> {
         if !self.config.enable_ipv6 {
             return Ok(());
         }
-        use super::functions::update_dns_records_v6;
-        update_dns_records_v6(self, ip).await
+        update_dns_records(self, &IpAddr::V6(*ip)).await
     }
 
     fn validate_config(&self) -> Result<(), Self::Error> {

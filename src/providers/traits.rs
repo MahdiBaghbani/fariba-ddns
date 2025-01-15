@@ -29,7 +29,7 @@ pub trait DnsProvider: Send + Sync {
         Self: Sized;
 
     /// Updates DNS records for all configured subdomains with IPv4
-    async fn update_dns_records(&self, ip: &Ipv4Addr) -> Result<(), Self::Error>;
+    async fn update_dns_records_v4(&self, ip: &Ipv4Addr) -> Result<(), Self::Error>;
 
     /// Updates DNS records for all configured subdomains with IPv6
     async fn update_dns_records_v6(&self, ip: &Ipv6Addr) -> Result<(), Self::Error>;
@@ -38,7 +38,7 @@ pub trait DnsProvider: Send + Sync {
     /// This is a convenience method that delegates to the appropriate specific method.
     async fn update_dns_records_ip(&self, ip: &IpAddr) -> Result<(), Self::Error> {
         match ip {
-            IpAddr::V4(ipv4) => self.update_dns_records(ipv4).await,
+            IpAddr::V4(ipv4) => self.update_dns_records_v4(ipv4).await,
             IpAddr::V6(ipv6) => self.update_dns_records_v6(ipv6).await,
         }
     }
