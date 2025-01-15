@@ -9,7 +9,6 @@ use async_trait::async_trait;
 
 // Project modules
 use crate::providers::traits::DnsProvider;
-use crate::utility::rate_limiter::traits::RateLimiter;
 use crate::utility::rate_limiter::types::TokenBucketRateLimiter;
 
 // Current module imports

@@ -1,6 +1,6 @@
 // Standard library
 use std::error::Error;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -19,7 +19,7 @@ use crate::settings::types::{ConfigManager, Settings};
 
 use super::constants::CLOUDFLARE_API_BASE;
 use super::errors::CloudflareError;
-use super::types::{CfConfig, Cloudflare, DnsResponse, DnsResponseResult, ZoneResponse};
+use super::types::{CfConfig, Cloudflare, DnsResponse, ZoneResponse};
 
 /// Creates a reqwest client with the appropriate headers for Cloudflare API.
 /// This includes setting up authentication headers and other necessary configuration.
@@ -95,7 +95,7 @@ pub async fn process_updates(
     shutdown_rx: Option<broadcast::Receiver<()>>,
 ) -> Result<(), Box<dyn Error>> {
     // Create a FuturesUnordered to hold our concurrent tasks.
-    let mut futures = FuturesUnordered::new();
+    let futures = FuturesUnordered::new();
 
     // For each Cloudflare instance, spawn an async task to update DNS records.
     for cloudflare in cloudflares {

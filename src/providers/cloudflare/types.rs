@@ -7,7 +7,6 @@ use reqwest::Client;
 use serde::Deserialize;
 
 // Project modules
-use crate::providers::traits::DnsProvider;
 use crate::utility::rate_limiter::traits::RateLimiter;
 use crate::utility::rate_limiter::types::RateLimitConfig;
 
