@@ -12,6 +12,10 @@ enabled = true
 name = "example.com"
 zone_id = "your_zone_id_here"
 api_token = "your_api_token_here"
+enable_ipv6 = true
+
+# Optional rate limit configuration
+rate_limit = { max_requests = 30, window_secs = 60 }
 
 # List of subdomains to update
 [[cloudflare.subdomains]]

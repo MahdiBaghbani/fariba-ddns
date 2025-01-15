@@ -10,23 +10,25 @@ use reqwest::Client;
 use serde::Deserialize;
 
 // Project modules
-use crate::metrics::{HealthChecker, MetricsManager};
 use crate::providers::traits::DnsProvider;
 use crate::utility::rate_limiter::traits::RateLimiter;
 use crate::utility::rate_limiter::types::{RateLimitConfig, TokenBucketRateLimiter};
-use crate::utility::SharedDnsCache;
 
 use super::errors::CloudflareError;
 use super::functions::create_reqwest_client;
 
 /// Represents a client for interacting with the Cloudflare API.
+/// This client handles DNS record management operations including:
+/// - Creating DNS records
+/// - Updating DNS records
+/// - Fetching DNS records
+/// - Managing both IPv4 (A) and IPv6 (AAAA) records
+///
+/// The client includes built-in rate limiting to respect Cloudflare's API limits.
 pub struct Cloudflare {
     pub config: CfConfig,
     pub client: Client,
     rate_limiter: Arc<dyn RateLimiter>,
-    metrics: Arc<MetricsManager>,
-    health: Arc<HealthChecker>,
-    pub cache: SharedDnsCache,
 }
 
 // Manual Debug implementation for Cloudflare
@@ -36,9 +38,6 @@ impl fmt::Debug for Cloudflare {
             .field("config", &self.config)
             .field("client", &self.client)
             .field("rate_limiter", &"<rate limiter>")
-            .field("metrics", &self.metrics)
-            .field("health", &self.health)
-            .field("cache", &self.cache)
             .finish()
     }
 }
@@ -50,24 +49,30 @@ impl Clone for Cloudflare {
             config: self.config.clone(),
             client: self.client.clone(),
             rate_limiter: Arc::clone(&self.rate_limiter),
-            metrics: Arc::clone(&self.metrics),
-            health: Arc::clone(&self.health),
-            cache: self.cache.clone(),
         }
     }
 }
 
 /// Configuration for Cloudflare API interactions.
+/// This struct holds all necessary settings for connecting to and managing
+/// DNS records through the Cloudflare API.
 #[derive(Debug, Deserialize, Clone)]
 pub struct CfConfig {
+    /// Whether this Cloudflare configuration is enabled
     pub enabled: bool,
+    /// The domain name (e.g., "example.com")
     pub name: String,
+    /// The Cloudflare zone ID for the domain
     pub zone_id: String,
+    /// The Cloudflare API token with appropriate permissions
     pub api_token: String,
+    /// Whether to enable IPv6 (AAAA) record management
     #[serde(default)]
     pub enable_ipv6: bool,
+    /// Rate limiting configuration to respect Cloudflare's API limits
     #[serde(default = "default_rate_limit_config")]
     pub rate_limit: RateLimitConfig,
+    /// List of subdomains to manage
     pub subdomains: Vec<CfSubDomain>,
 }
 
@@ -82,6 +87,8 @@ fn default_rate_limit_config() -> RateLimitConfig {
 /// An empty name represents the root domain.
 #[derive(Debug, Deserialize, Clone)]
 pub struct CfSubDomain {
+    /// The subdomain name (e.g., "www" for www.example.com)
+    /// Leave empty for root domain
     #[serde(default)]
     pub name: String,
 }
@@ -95,8 +102,11 @@ pub struct DnsResponse {
 /// Details of the DNS response result.
 #[derive(Debug, Deserialize)]
 pub struct DnsResponseResult {
+    /// The record ID
     pub id: String,
+    /// The record content (IP address)
     pub content: String,
+    /// The record type (A or AAAA)
     #[serde(default)]
     pub r#type: String,
 }
@@ -111,17 +121,14 @@ pub struct ZoneResponse {
 /// Details of the zone response result.
 #[derive(Debug, Deserialize)]
 pub struct ZoneResponseResult {
+    /// The zone status (e.g., "active")
     pub status: String,
 }
 
 impl Cloudflare {
-    /// Creates a new Cloudflare instance with the provided metrics and health monitoring
-    pub fn new_with_monitoring(
-        config: CfConfig,
-        metrics: Arc<MetricsManager>,
-        health: Arc<HealthChecker>,
-        cache: SharedDnsCache,
-    ) -> Result<Self, CloudflareError> {
+    /// Creates a new Cloudflare instance with the provided configuration.
+    /// This will initialize the HTTP client and rate limiter.
+    pub fn new(config: CfConfig) -> Result<Self, CloudflareError> {
         let client = create_reqwest_client(&config)?;
         let rate_limiter = Arc::new(TokenBucketRateLimiter::new(config.rate_limit.clone()));
 
@@ -129,20 +136,17 @@ impl Cloudflare {
             config,
             client,
             rate_limiter,
-            metrics,
-            health,
-            cache,
         })
     }
 
-    /// Acquires a rate limit permit before making an API call
+    /// Acquires a rate limit permit before making an API call.
+    /// This ensures we respect Cloudflare's API rate limits.
     pub async fn with_rate_limit<F, T, E>(&self, f: F) -> Result<T, E>
     where
         F: Future<Output = Result<T, E>>,
         E: From<CloudflareError>,
     {
         if !self.rate_limiter.acquire().await {
-            self.metrics.record_rate_limit().await;
             return Err(CloudflareError::RateLimited(self.config.name.clone()).into());
         }
 
@@ -158,30 +162,12 @@ impl DnsProvider for Cloudflare {
     type Error = CloudflareError;
 
     fn new(config: Self::Config) -> Result<Self, Self::Error> {
-        // This is just a convenience method that creates default monitoring
-        // It should only be used for testing or when monitoring is not required
-        Self::new_with_monitoring(
-            config,
-            Arc::new(MetricsManager::new()),
-            Arc::new(HealthChecker::new()),
-            SharedDnsCache::new(60), // Default 1 minute TTL
-        )
+        Self::new(config)
     }
 
     async fn update_dns_records(&self, ip: &Ipv4Addr) -> Result<(), Self::Error> {
         use super::functions::update_dns_records;
-        let result = update_dns_records(self, ip).await;
-        match &result {
-            Ok(_) => {
-                self.metrics.record_success(false, ip.to_string()).await;
-                self.health.record_success().await;
-            }
-            Err(e) => {
-                self.metrics.record_failure(false).await;
-                self.health.record_failure(e.to_string()).await;
-            }
-        }
-        result
+        update_dns_records(self, ip).await
     }
 
     async fn update_dns_records_v6(&self, ip: &Ipv6Addr) -> Result<(), Self::Error> {
@@ -189,18 +175,7 @@ impl DnsProvider for Cloudflare {
             return Ok(());
         }
         use super::functions::update_dns_records_v6;
-        let result = update_dns_records_v6(self, ip).await;
-        match &result {
-            Ok(_) => {
-                self.metrics.record_success(true, ip.to_string()).await;
-                self.health.record_success().await;
-            }
-            Err(e) => {
-                self.metrics.record_failure(true).await;
-                self.health.record_failure(e.to_string()).await;
-            }
-        }
-        result
+        update_dns_records_v6(self, ip).await
     }
 
     fn validate_config(&self) -> Result<(), Self::Error> {
@@ -229,23 +204,6 @@ impl DnsProvider for Cloudflare {
             });
         }
 
-        // Subdomain validation
-        for subdomain in &self.config.subdomains {
-            if subdomain.name.is_empty() {
-                return Err(CloudflareError::InvalidSubdomain {
-                    zone: self.config.name.clone(),
-                    subdomain: subdomain.name.clone(),
-                });
-            }
-            // Check for valid domain name format
-            if !is_valid_domain_name(&subdomain.name) {
-                return Err(CloudflareError::InvalidSubdomain {
-                    zone: self.config.name.clone(),
-                    subdomain: subdomain.name.clone(),
-                });
-            }
-        }
-
         Ok(())
     }
 
@@ -256,24 +214,4 @@ impl DnsProvider for Cloudflare {
     fn get_name(&self) -> &str {
         &self.config.name
     }
-}
-
-/// Validates a domain name according to RFC 1035
-fn is_valid_domain_name(name: &str) -> bool {
-    if name.is_empty() || name.len() > 253 {
-        return false;
-    }
-
-    let labels: Vec<&str> = name.split('.').collect();
-    if labels.len() < 2 {
-        return false;
-    }
-
-    labels.iter().all(|label| {
-        !label.is_empty()
-            && label.len() <= 63
-            && label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
-            && !label.starts_with('-')
-            && !label.ends_with('-')
-    })
 }
