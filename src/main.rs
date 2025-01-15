@@ -5,7 +5,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 // 3rd party crates
-use tokio::sync::RwLockReadGuard;
+use tokio::signal::ctrl_c;
+use tokio::sync::{broadcast, RwLockReadGuard};
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::{filter::LevelFilter, EnvFilter};
 
@@ -64,8 +65,26 @@ async fn main() {
 
     info!("⚙️ Settings have been loaded.");
 
-    // Run the main application logic
-    run(config).await.expect("Failed to run the application");
+    // Create a broadcast channel for shutdown signal
+    let (shutdown_tx, _) = broadcast::channel(1);
+    let shutdown_tx_clone = shutdown_tx.clone();
+
+    // Handle Ctrl+C
+    tokio::spawn(async move {
+        if let Err(e) = ctrl_c().await {
+            error!("Failed to listen for Ctrl+C: {}", e);
+            return;
+        }
+        info!("Received shutdown signal, initiating graceful shutdown...");
+        let _ = shutdown_tx_clone.send(());
+    });
+
+    // Run the main application logic with shutdown signal
+    if let Err(e) = run(config, shutdown_tx.subscribe()).await {
+        error!("Application error: {}", e);
+    }
+
+    info!("Shutdown complete.");
 }
 
 /// Main application loop that handles IP monitoring and DNS updates.
@@ -76,7 +95,11 @@ async fn main() {
 /// - Updates DNS records when changes occur
 /// - Handles network connectivity issues
 /// - Respects configured update intervals and rate limits
-async fn run(config: Arc<ConfigManager>) -> Result<(), Box<dyn Error>> {
+/// - Implements graceful shutdown on signal
+async fn run(
+    config: Arc<ConfigManager>,
+    mut shutdown_rx: broadcast::Receiver<()>,
+) -> Result<(), Box<dyn Error>> {
     let settings = config.settings.read().await;
     let update_interval: u64 = settings.update.interval;
     info!("🕰️ Updating DNS records every {} seconds", update_interval);
@@ -94,59 +117,81 @@ async fn run(config: Arc<ConfigManager>) -> Result<(), Box<dyn Error>> {
     let mut previous_ipv6: Option<Ipv6Addr> = None;
 
     loop {
-        // Check network connectivity first
-        if !ip_detector.check_network().await {
-            warn!("Network connectivity lost, waiting for recovery");
-            tokio::time::sleep(Duration::from_secs(
-                ip_detector.get_network_retry_interval(),
-            ))
-            .await;
-            continue;
-        }
+        // Create subscriptions for DNS updates before entering select!
+        let ipv4_shutdown = shutdown_rx.resubscribe();
+        let ipv6_shutdown = shutdown_rx.resubscribe();
 
-        // Get the public IPv4 address with consensus
-        match ip_detector.detect_ip(IpVersion::V4).await {
-            Ok(ip) => {
-                if let IpAddr::V4(ipv4) = ip {
-                    if Some(ipv4) != previous_ipv4 {
-                        info!("Public 🧩 IPv4 detected with consensus: {}", ipv4);
-                        previous_ipv4 = Some(ipv4);
+        tokio::select! {
+            // Handle shutdown signal
+            _ = shutdown_rx.recv() => {
+                info!("Shutdown signal received, cleaning up...");
+                // Allow in-progress updates to complete (with timeout)
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                return Ok(());
+            }
+            // Main application logic
+            result = async {
+                // Check network connectivity first
+                if !ip_detector.check_network().await {
+                    warn!("Network connectivity lost, waiting for recovery");
+                    tokio::time::sleep(Duration::from_secs(
+                        ip_detector.get_network_retry_interval(),
+                    ))
+                    .await;
+                    return Ok::<(), Box<dyn Error>>(());
+                }
 
-                        // Process updates
-                        if let Err(e) = process_updates(&cloudflares, &ip).await {
-                            error!("Error updating IPv4 records: {}", e);
+                // Get the public IPv4 address with consensus
+                match ip_detector.detect_ip(IpVersion::V4).await {
+                    Ok(ip) => {
+                        if let IpAddr::V4(ipv4) = ip {
+                            if Some(ipv4) != previous_ipv4 {
+                                info!("Public 🧩 IPv4 detected with consensus: {}", ipv4);
+                                previous_ipv4 = Some(ipv4);
+
+                                // Process updates with pre-created subscription
+                                if let Err(e) = process_updates(&cloudflares, &ip, Some(ipv4_shutdown)).await {
+                                    error!("Error updating IPv4 records: {}", e);
+                                }
+                            } else {
+                                debug!("🧩 IPv4 address unchanged");
+                            }
                         }
-                    } else {
-                        debug!("🧩 IPv4 address unchanged");
+                    }
+                    Err(e) => {
+                        // Log IPv4 errors as warnings since IPv4 is critical
+                        warn!("🧩 IPv4 detection failed: {}", e);
                     }
                 }
-            }
-            Err(e) => {
-                // Log IPv4 errors as warnings since IPv4 is critical
-                warn!("🧩 IPv4 detection failed: {}", e);
-            }
-        }
 
-        // Get the public IPv6 address with consensus
-        match ip_detector.detect_ip(IpVersion::V6).await {
-            Ok(ip) => {
-                if let IpAddr::V6(ipv6) = ip {
-                    if Some(ipv6) != previous_ipv6 {
-                        info!("Public 🧩 IPv6 detected with consensus: {}", ipv6);
-                        previous_ipv6 = Some(ipv6);
+                // Get the public IPv6 address with consensus
+                match ip_detector.detect_ip(IpVersion::V6).await {
+                    Ok(ip) => {
+                        if let IpAddr::V6(ipv6) = ip {
+                            if Some(ipv6) != previous_ipv6 {
+                                info!("Public 🧩 IPv6 detected with consensus: {}", ipv6);
+                                previous_ipv6 = Some(ipv6);
 
-                        // Process updates
-                        if let Err(e) = process_updates(&cloudflares, &ip).await {
-                            error!("Error updating IPv6 records: {}", e);
+                                // Process updates with pre-created subscription
+                                if let Err(e) = process_updates(&cloudflares, &ip, Some(ipv6_shutdown)).await {
+                                    error!("Error updating IPv6 records: {}", e);
+                                }
+                            } else {
+                                debug!("🧩 IPv6 address unchanged");
+                            }
                         }
-                    } else {
-                        debug!("🧩 IPv6 address unchanged");
+                    }
+                    Err(e) => {
+                        // Log IPv6 errors as debug since IPv6 is optional
+                        debug!("🧩 IPv6 detection failed: {}", e);
                     }
                 }
-            }
-            Err(e) => {
-                // Log IPv6 errors as debug since IPv6 is optional
-                debug!("🧩 IPv6 detection failed: {}", e);
+
+                Ok(())
+            } => {
+                if let Err(e) = result {
+                    error!("Error in main loop: {}", e);
+                }
             }
         }
 

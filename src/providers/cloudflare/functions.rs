@@ -2,13 +2,15 @@
 use std::error::Error;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
+use std::time::Duration;
 
 // 3rd party crates
 use futures::{stream::FuturesUnordered, StreamExt};
 use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest::{header, Client, StatusCode};
 use serde_json::json;
-use tokio::sync::RwLockReadGuard;
+use tokio::sync::{broadcast, RwLockReadGuard};
+use tokio::time::timeout;
 use tracing::{debug, error, info, warn};
 
 // Project modules
@@ -86,9 +88,11 @@ pub async fn get_cloudflares(
 /// Processes updates concurrently for multiple Cloudflare instances.
 /// This function handles updating DNS records for multiple domains in parallel,
 /// using a FuturesUnordered to manage concurrent updates efficiently.
+/// Now includes graceful shutdown handling.
 pub async fn process_updates(
     cloudflares: &[Cloudflare],
     ip: &IpAddr,
+    shutdown_rx: Option<broadcast::Receiver<()>>,
 ) -> Result<(), Box<dyn Error>> {
     // Create a FuturesUnordered to hold our concurrent tasks.
     let mut futures = FuturesUnordered::new();
@@ -108,20 +112,91 @@ pub async fn process_updates(
         });
     }
 
-    // Collect all results, processing them as they complete.
-    while let Some(result) = futures.next().await {
-        match result {
-            Ok(_) => {
-                debug!("Successfully updated Cloudflare records");
+    // Set a timeout for the entire update process
+    let update_timeout = Duration::from_secs(30);
+
+    // Process updates with timeout and shutdown handling
+    match timeout(
+        update_timeout,
+        process_updates_with_shutdown(futures, shutdown_rx),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => {
+            error!(
+                "DNS updates timed out after {} seconds",
+                update_timeout.as_secs()
+            );
+            Err(Box::new(CloudflareError::UpdateTimeout))
+        }
+    }
+}
+
+/// Helper function to process updates with shutdown handling
+async fn process_updates_with_shutdown(
+    mut futures: FuturesUnordered<impl std::future::Future<Output = Result<(), CloudflareError>>>,
+    mut shutdown_rx: Option<broadcast::Receiver<()>>,
+) -> Result<(), Box<dyn Error>> {
+    let mut update_count = 0;
+    let mut last_error = None;
+
+    loop {
+        tokio::select! {
+            // Handle shutdown signal if provided
+            shutdown = async {
+                if let Some(rx) = &mut shutdown_rx {
+                    rx.recv().await
+                } else {
+                    Ok(())
+                }
+            } => {
+                match shutdown {
+                    Ok(_) => {
+                        info!("Received shutdown signal during DNS updates, waiting for in-progress updates...");
+                        // Allow a short time for in-progress updates to complete
+                        tokio::time::sleep(Duration::from_secs(5)).await;
+                        break;
+                    }
+                    Err(e) => {
+                        warn!("Shutdown receiver error: {}", e);
+                        // Continue processing if there's a receiver error
+                        continue;
+                    }
+                }
             }
-            Err(e) => {
-                error!("Error updating Cloudflare records: {}", e);
-                return Err(Box::new(e));
+            // Process next update
+            Some(result) = futures.next() => {
+                match result {
+                    Ok(_) => {
+                        update_count += 1;
+                        debug!("Successfully completed DNS update {}", update_count);
+                    }
+                    Err(e) => {
+                        error!("Error updating DNS records: {}", e);
+                        last_error = Some(e);
+                    }
+                }
+
+                // Check if all updates are complete
+                if futures.is_empty() {
+                    break;
+                }
             }
+            // All futures completed
+            else => break,
         }
     }
 
-    Ok(())
+    // Report results
+    if update_count > 0 {
+        info!("Completed {} DNS updates", update_count);
+        Ok(())
+    } else if let Some(e) = last_error {
+        Err(Box::new(e))
+    } else {
+        Ok(())
+    }
 }
 
 /// Fetches DNS records for a specific domain.
@@ -144,15 +219,13 @@ pub(super) async fn fetch_dns_records(
         "Sending DNS records request"
     );
 
-    let response = tokio::time::timeout(
-        tokio::time::Duration::from_secs(10),
-        cloudflare.client.get(&url).send(),
-    )
-    .await
-    .map_err(|_| CloudflareError::Timeout {
-        zone: cloudflare.config.name.clone(),
-        message: "DNS record fetch request timed out".to_string(),
-    })??;
+    let response =
+        tokio::time::timeout(Duration::from_secs(10), cloudflare.client.get(&url).send())
+            .await
+            .map_err(|_| CloudflareError::Timeout {
+                zone: cloudflare.config.name.clone(),
+                message: "DNS record fetch request timed out".to_string(),
+            })??;
 
     let status = response.status();
     match status {

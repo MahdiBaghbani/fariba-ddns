@@ -1,7 +1,7 @@
 // 3rd party crates
 use thiserror::Error;
 
-/// Custom error type for Cloudflare operations.
+/// Represents errors that can occur during Cloudflare API operations
 #[derive(Debug, Error)]
 pub enum CloudflareError {
     #[error("Invalid API token for zone '{0}'")]
@@ -53,4 +53,7 @@ pub enum CloudflareError {
         retries: u32,
         message: String,
     },
+
+    #[error("DNS update operation timed out")]
+    UpdateTimeout,
 }
