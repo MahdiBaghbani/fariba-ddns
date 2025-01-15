@@ -96,7 +96,6 @@ impl IpDetector {
         Self {
             config,
             rate_limiters,
-            last_check: Arc::new(RwLock::new(Instant::now())),
             client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
                 .user_agent("fariba-ddns/1.0")
@@ -331,59 +330,6 @@ impl IpDetector {
             responses: responses.len(),
             required: self.config.min_consensus,
         })
-    }
-
-    /// Checks network connectivity with retries
-    pub async fn check_network(&self) -> bool {
-        // Try IPv4 services first
-        if self.check_network_for_version::<V4>().await {
-            return true;
-        }
-        // Fall back to IPv6 services
-        self.check_network_for_version::<V6>().await
-    }
-
-    /// Generic network check for a specific version
-    async fn check_network_for_version<V: IpVersionOps>(&self) -> bool {
-        let services = V::get_services();
-        let offset = V::rate_limiter_offset();
-
-        for (idx, service) in services.iter().enumerate() {
-            let rate_limiter_idx = idx + offset;
-            if !self.rate_limiters[rate_limiter_idx].acquire().await {
-                continue;
-            }
-
-            for retry in 0..MAX_RETRIES {
-                match self.client.get(service.base_url).send().await {
-                    Ok(_) => {
-                        self.rate_limiters[rate_limiter_idx].release().await;
-                        return true;
-                    }
-                    Err(e) => {
-                        if retry < MAX_RETRIES - 1 {
-                            warn!(
-                                "Network check failed for {}, retrying: {}",
-                                service.base_url, e
-                            );
-                            tokio::time::sleep(Duration::from_millis(RETRY_DELAY_MS)).await;
-                            continue;
-                        }
-                        error!(
-                            "Network check failed for {} after {} retries: {}",
-                            service.base_url, MAX_RETRIES, e
-                        );
-                    }
-                }
-            }
-            self.rate_limiters[rate_limiter_idx].release().await;
-        }
-        false
-    }
-
-    /// Gets the network retry interval from the configuration
-    pub fn get_network_retry_interval(&self) -> u64 {
-        self.config.network_retry_interval
     }
 
     /// Query IP service with retry logic

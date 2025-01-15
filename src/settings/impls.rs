@@ -8,9 +8,6 @@ use config::{Config, ConfigError, File};
 use log::{error, info, LevelFilter};
 use tokio::sync::RwLock;
 
-// Project imports
-use crate::providers::cloudflare::types::CfConfig;
-
 // Current module imports
 use super::constants::DEFAULT_CONFIG;
 use super::errors::ValidationError;
@@ -19,14 +16,6 @@ use super::types::{ConfigManager, Settings, ValidatedSettings};
 impl Settings {
     pub fn get_log_level(&self) -> String {
         self.log.level.to_lowercase()
-    }
-
-    pub fn get_update_interval(&self) -> u64 {
-        self.update.interval
-    }
-
-    pub fn get_cloudflares(&self) -> Vec<CfConfig> {
-        self.cloudflare.clone()
     }
 
     pub fn validate(&self) -> Result<(), ValidationError> {
@@ -161,11 +150,6 @@ impl ConfigManager {
         log::set_max_level(level_filter);
     }
 
-    /// Provides a read-locked reference to the current settings.
-    pub async fn get_settings(&self) -> tokio::sync::RwLockReadGuard<'_, Settings> {
-        self.settings.read().await
-    }
-
     /// Provides an `Arc` to the settings `RwLock`.
     pub fn _get_settings_arc(&self) -> Arc<RwLock<Settings>> {
         Arc::clone(&self.settings)
@@ -173,10 +157,6 @@ impl ConfigManager {
 
     pub async fn get_log_level(&self) -> String {
         self.settings.read().await.get_log_level()
-    }
-
-    pub async fn get_update_interval(&self) -> u64 {
-        self.settings.read().await.get_update_interval()
     }
 }
 

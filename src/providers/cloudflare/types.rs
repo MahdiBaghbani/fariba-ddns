@@ -2,7 +2,6 @@
 use std::sync::Arc;
 
 // 3rd party crates
-
 use reqwest::Client;
 use serde::Deserialize;
 
@@ -90,16 +89,12 @@ pub struct DnsResponseResult {
     pub id: String,
     /// The record content (IP address)
     pub content: String,
-    /// The record type (A or AAAA)
-    #[serde(default)]
-    pub r#type: String,
 }
 
 /// Represents the response from a zone request.
 #[derive(Debug, Deserialize)]
 pub struct ZoneResponse {
     pub result: ZoneResponseResult,
-    pub success: bool,
 }
 
 /// Details of the zone response result.

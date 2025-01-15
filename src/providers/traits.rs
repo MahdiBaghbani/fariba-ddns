@@ -3,20 +3,12 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 // 3rd party crates
 use async_trait::async_trait;
-use serde::Deserialize;
-
-/// Represents a generic DNS record update configuration
-#[derive(Debug, Clone, Deserialize)]
-pub struct DnsUpdateConfig {
-    pub enabled: bool,
-    pub name: String,
-    pub subdomains: Vec<String>,
-}
 
 /// Core trait that all DNS providers must implement.
 /// This trait defines the basic operations required for a DNS provider
 /// to update DNS records with IPv4 and IPv6 addresses.
 #[async_trait]
+#[allow(unused)]
 pub trait DnsProvider: Send + Sync {
     /// The specific configuration type for this provider
     type Config: Clone + Send + Sync;

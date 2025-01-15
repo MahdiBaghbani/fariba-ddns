@@ -38,7 +38,6 @@ pub struct VersionSuspension {
 pub struct IpDetector {
     pub config: IpDetection,
     pub rate_limiters: Vec<Arc<dyn RateLimiter>>,
-    pub last_check: Arc<RwLock<Instant>>,
     pub client: reqwest::Client,
     pub suspended_versions: Arc<RwLock<HashMap<IpVersion, VersionSuspension>>>,
 }
@@ -51,6 +50,7 @@ pub struct IpService {
 }
 
 #[derive(Debug)]
+#[allow(unused)]
 pub struct IpResponse {
     pub ip: IpAddr,
     pub is_primary: bool,

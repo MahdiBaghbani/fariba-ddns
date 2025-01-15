@@ -12,9 +12,6 @@ pub enum IpDetectionError {
         error: reqwest::Error,
     },
 
-    #[error("Invalid response from {service}: {response}")]
-    InvalidResponse { service: String, response: String },
-
     #[error("IP version mismatch from {service}: expected {expected:?}, got {got:?}")]
     VersionMismatch {
         service: String,

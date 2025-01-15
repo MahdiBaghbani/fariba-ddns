@@ -1,9 +1,6 @@
 // Project imports
 use crate::utility::ip_detector::types::IpService;
 
-/// Number of primary IP detection services
-pub const PRIMARY_SERVICE_COUNT: usize = 3;
-
 /// Default settings
 pub const DEFAULT_MAX_REQUESTS_PER_HOUR: u32 = 200;
 pub const DEFAULT_MIN_CONSENSUS: u32 = 4;
@@ -12,8 +9,6 @@ pub const DEFAULT_MAX_NETWORK_RETRY_INTERVAL: u64 = 30;
 /// Suspension settings
 /// // Number of consecutive failures before suspension
 pub const MAX_CONSECUTIVE_FAILURES: u32 = 3;
-// Check every 5 minutes if version should be re-enabled
-pub const SUSPENSION_CHECK_INTERVAL_SECS: u64 = 300;
 // Keep version suspended for 1 hour
 pub const SUSPENSION_DURATION_SECS: u64 = 3600;
 

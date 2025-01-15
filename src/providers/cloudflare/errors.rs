@@ -2,6 +2,10 @@
 use thiserror::Error;
 
 /// Represents errors that can occur during Cloudflare API operations
+/// These variants are retained for comprehensive error handling of all possible
+/// API failure modes, even if some paths are not currently exercised.
+/// This ensures forward compatibility and proper error handling for future
+/// implementations and edge cases.
 #[derive(Debug, Error)]
 pub enum CloudflareError {
     #[error("Invalid API token for zone '{0}'")]
@@ -38,36 +42,14 @@ pub enum CloudflareError {
     #[error("Invalid rate limit configuration for zone '{zone}': {reason}")]
     InvalidRateLimit { zone: String, reason: String },
 
-    #[error("Invalid subdomain '{subdomain}' for zone '{zone}'")]
-    InvalidSubdomain { zone: String, subdomain: String },
-
     #[error("Zone '{0}' is not active (status: {1})")]
     InactiveZone(String, String),
 
     #[error("Operation timed out for zone '{zone}': {message}")]
     Timeout { zone: String, message: String },
 
-    #[error("DNS record operation failed for zone '{zone}' after {retries} retries: {message}")]
-    RetryExhausted {
-        zone: String,
-        retries: u32,
-        message: String,
-    },
-
     #[error("DNS update operation timed out")]
     UpdateTimeout,
-
-    #[error("API error: {0}")]
-    Api(String),
-
-    #[error("Rate limit exceeded")]
-    RateLimitExceeded,
-
-    #[error("Network error: {0}")]
-    Network(String),
-
-    #[error("Invalid response: {0}")]
-    InvalidResponse(String),
 
     #[error("Validation error: {0}")]
     Validation(#[from] CloudflareValidationError),
