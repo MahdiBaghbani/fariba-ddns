@@ -1,8 +1,8 @@
 //! Fariba DDNS Client
-//! 
+//!
 //! A flexible Dynamic DNS client that supports multiple DNS providers.
 //! This client automatically updates DNS records when your IP address changes,
-//! making it ideal for homelab and self-hosted services.
+//! making it ideal for home-lab and self-hosted services.
 //!
 //! # Features
 //!
@@ -16,7 +16,7 @@
 //! ```no_run
 //! # async fn run() {
 //! use fariba_ddns::ConfigManager;
-//! 
+//!
 //! let config = ConfigManager::from_file(".settings.toml").await?;
 //! fariba_ddns::run(config).await?;
 //! # }
